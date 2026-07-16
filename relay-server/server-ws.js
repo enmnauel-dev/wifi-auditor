@@ -98,7 +98,7 @@ wss.on('connection', ws => {
         if (msg.type === 'message') {
           const peer = guestPairs.get(ws);
           if (peer && peer.readyState === WebSocket.OPEN) {
-            sendJSON(peer, { type: 'message', text: msg.text });
+            sendJSON(peer, { type: 'message', from: 'Invitado', text: msg.text });
           }
         }
         return;
