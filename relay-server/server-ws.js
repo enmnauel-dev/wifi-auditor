@@ -38,34 +38,24 @@ function notifyFriends(username, type) {
   });
 }
 
-// Guest pairing (simple relay mode, no auth required)
-const guestPool = [];
-const guestPairs = new Map(); // guestWs -> pairedGuestWs
+// Guest system: all guests see each other, can set name, send direct messages
+const guests = new Map(); // ws -> { id, name }
+let guestIdCounter = 0;
 
-function pairGuest(ws) {
-  if (guestPool.length > 0) {
-    const peer = guestPool.shift();
-    guestPairs.set(ws, peer);
-    guestPairs.set(peer, ws);
-    sendJSON(ws, { type: 'paired' });
-    sendJSON(peer, { type: 'paired' });
-    console.log('Guests paired');
-  } else {
-    guestPool.push(ws);
-    sendJSON(ws, { type: 'waiting' });
-    console.log('Guest waiting');
+function guestList() {
+  const list = [];
+  for (const [, info] of guests) {
+    list.push({ id: info.id, name: info.name });
   }
+  return list;
 }
 
-function unPairGuest(ws) {
-  const peer = guestPairs.get(ws);
-  if (peer) {
-    guestPairs.delete(ws);
-    guestPairs.delete(peer);
-    if (peer.readyState === WebSocket.OPEN) sendJSON(peer, { type: 'peer_disconnected' });
+function broadcastGuestList() {
+  const list = guestList();
+  const msg = { type: 'guest_list', guests: list };
+  for (const [ws] of guests) {
+    sendJSON(ws, msg);
   }
-  const idx = guestPool.indexOf(ws);
-  if (idx !== -1) guestPool.splice(idx, 1);
 }
 
 const server = http.createServer((req, res) => {
@@ -82,23 +72,49 @@ wss.on('connection', ws => {
   ws.on('pong', heartbeat);
   let loggedUser = null;
   let isGuest = true;
-  console.log('Client connected');
-  pairGuest(ws);
+  const guestId = 'g' + (++guestIdCounter);
+  guests.set(ws, { id: guestId, name: 'Invitado' });
+  sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
+  broadcastGuestList();
+  console.log(`Guest connected: ${guestId}`);
 
   ws.on('message', data => {
     try {
       const msg = JSON.parse(data.toString());
       if (isGuest && (msg.type === 'register' || msg.type === 'login')) {
         isGuest = false;
-        unPairGuest(ws);
+        guests.delete(ws);
+        broadcastGuestList();
         handleMessage(ws, msg);
         return;
       }
       if (isGuest) {
-        if (msg.type === 'message') {
-          const peer = guestPairs.get(ws);
-          if (peer && peer.readyState === WebSocket.OPEN) {
-            sendJSON(peer, { type: 'message', from: 'Invitado', text: msg.text });
+        if (msg.type === 'set_name') {
+          const info = guests.get(ws);
+          if (info && msg.name) {
+            info.name = msg.name.substring(0, 20);
+            broadcastGuestList();
+          }
+        } else if (msg.type === 'get_guests') {
+          sendJSON(ws, { type: 'guest_list', guests: guestList() });
+        } else if (msg.type === 'message') {
+          const from = guests.get(ws);
+          if (!from) return;
+          if (msg.to) {
+            // Direct message to specific guest
+            for (const [targetWs, info] of guests) {
+              if (info.id === msg.to && targetWs.readyState === WebSocket.OPEN) {
+                sendJSON(targetWs, { type: 'message', from: from.name, from_id: from.id, text: msg.text });
+                break;
+              }
+            }
+          } else {
+            // Broadcast to all other guests
+            for (const [targetWs, info] of guests) {
+              if (targetWs !== ws && targetWs.readyState === WebSocket.OPEN) {
+                sendJSON(targetWs, { type: 'message', from: from.name, from_id: from.id, text: msg.text });
+              }
+            }
           }
         }
         return;
@@ -115,7 +131,9 @@ wss.on('connection', ws => {
       notifyFriends(loggedUser, 'friend_offline');
       console.log(`${loggedUser} disconnected`);
     } else {
-      unPairGuest(ws);
+      guests.delete(ws);
+      broadcastGuestList();
+      console.log(`Guest disconnected: ${guestId}`);
     }
   });
 
