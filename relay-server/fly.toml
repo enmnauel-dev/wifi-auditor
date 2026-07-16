@@ -1,0 +1,15 @@
+app = "wifi-auditor-relay"
+primary_region = "iad"
+
+[build]
+  builder = "heroku/buildpacks:20"
+
+[env]
+  PORT = "56789"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 56789
+
+  [[services.ports]]
+    port = 56789

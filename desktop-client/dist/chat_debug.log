@@ -1,0 +1,4 @@
+13:16:49 Connecting to wss://wifi-auditor.onrender.com:443
+13:16:49 Connected OK
+13:16:49 Read loop started
+13:16:49 recv: {"type":"waiting"}
