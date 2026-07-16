@@ -57,9 +57,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestWifiPermissions()
+        prefs = getSharedPreferences("wifichat", Context.MODE_PRIVATE)
         setContent {
             WiFiAuditorTheme { WiFiAuditorApp() }
         }
+    }
+
+    companion object {
+        lateinit var prefs: android.content.SharedPreferences
     }
 
     private fun requestWifiPermissions() {
@@ -935,9 +940,10 @@ fun ToolsScreen(
         val chatServerRunning by vm.chatServerRunning.collectAsState()
         val chatRelayConnected by vm.chatRelayConnected.collectAsState()
         val guestList by vm.guestList.collectAsState()
-        var chatTargetIp by remember { mutableStateOf("") }
-        var chatRelayUrl by remember { mutableStateOf("") }
-        var chatRelayPort by remember { mutableStateOf("56789") }
+        val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
+        var chatTargetIp by remember { mutableStateOf(prefs?.getString("target_ip", "") ?: "") }
+        var chatRelayUrl by remember { mutableStateOf(prefs?.getString("relay_url", "") ?: "") }
+        var chatRelayPort by remember { mutableStateOf(prefs?.getString("relay_port", "56789") ?: "56789") }
         var chatText by remember { mutableStateOf("") }
         var useRelay by remember { mutableStateOf(false) }
         var guestName by remember { mutableStateOf("Invitado") }
@@ -994,9 +1000,9 @@ fun ToolsScreen(
                         }
                     }
                     Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(value = chatTargetIp, onValueChange = { chatTargetIp = it },
-                        label = { Text("IP destino") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        placeholder = { Text("Ej: 192.168.1.50") })
+                        OutlinedTextField(value = chatTargetIp, onValueChange = { chatTargetIp = it; prefs?.edit()?.putString("target_ip", it)?.apply() },
+                            label = { Text("IP destino") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            placeholder = { Text("Ej: 192.168.1.50") })
                 } else {
                     // Modo Remoto
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1007,11 +1013,11 @@ fun ToolsScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        OutlinedTextField(value = chatRelayUrl, onValueChange = { chatRelayUrl = it },
+                        OutlinedTextField(value = chatRelayUrl, onValueChange = { chatRelayUrl = it; prefs?.edit()?.putString("relay_url", it)?.apply() },
                             modifier = Modifier.weight(1f), singleLine = true,
                             label = { Text("Servidor relay") },
                             placeholder = { Text("ej: mirelay.railway.app") })
-                        OutlinedTextField(value = chatRelayPort, onValueChange = { chatRelayPort = it },
+                        OutlinedTextField(value = chatRelayPort, onValueChange = { chatRelayPort = it; prefs?.edit()?.putString("relay_port", it)?.apply() },
                             modifier = Modifier.width(80.dp), singleLine = true,
                             label = { Text("Puerto") })
                     }
