@@ -189,32 +189,37 @@ class DesktopClient:
 
     def build_main_screen(self):
         self.clear(); self.root.geometry("500x500")
-        top = tk.Frame(self.root, bg="#16213e")
+        top = tk.Frame(self.root, bg="#075E54")
         top.pack(fill="x")
-        tk.Label(top, text="WiFi Auditor Chat", font=("Arial", 13, "bold"), fg="#64B5F6", bg="#16213e").pack(side="left", padx=12, pady=10)
-        self.status_lbl = tk.Label(top, text="Conectado", fg="#4CAF50", bg="#16213e", font=("Arial", 9))
-        self.status_lbl.pack(side="left", padx=10)
-        tk.Button(top, text="Desconectar", bg="#f44336", fg="white", relief="flat", command=self.disconnect).pack(side="right", padx=10)
-        self.chat_display = tk.Text(self.root, bg="#0f3460", fg="white", font=("Arial", 11), wrap="word", state="disabled", relief="flat")
-        self.chat_display.pack(fill="both", expand=True, padx=10, pady=5)
-        self.chat_display.tag_config("me", justify="right", foreground="#90CAF9")
-        self.chat_display.tag_config("other", justify="left", foreground="#A5D6A7")
-        self.chat_display.tag_config("system", justify="center", foreground="#FFB74D", font=("Arial", 9))
-        self.chat_display.tag_config("time", foreground="#555555", font=("Arial", 8))
-        inp = tk.Frame(self.root, bg="#1a1a2e")
-        inp.pack(fill="x", padx=10, pady=(0, 10))
-        self.msg_entry = tk.Entry(inp, bg="#0f3460", fg="white", insertbackground="white", relief="flat", font=("Arial", 11))
-        self.msg_entry.pack(side="left", fill="x", expand=True, padx=(0, 5), ipady=8)
+        tk.Label(top, text="WiFi Auditor Chat", font=("Arial", 14, "bold"), fg="white", bg="#075E54").pack(side="left", padx=14, pady=10)
+        self.status_lbl = tk.Label(top, text="Conectado", fg="#81C784", bg="#075E54", font=("Arial", 9))
+        self.status_lbl.pack(side="left", padx=8)
+        tk.Button(top, text="Desconectar", bg="#d32f2f", fg="white", relief="flat", font=("Arial", 9),
+                  command=self.disconnect).pack(side="right", padx=10, pady=8)
+        bg_color = "#0B141A"
+        self.chat_frame = tk.Frame(self.root, bg=bg_color)
+        self.chat_frame.pack(fill="both", expand=True)
+        self.chat_display = tk.Text(self.chat_frame, bg="#0B141A", fg="white", font=("Arial", 11), wrap="word",
+                                      state="disabled", relief="flat", borderwidth=0, padx=10, pady=5)
+        self.chat_display.pack(fill="both", expand=True)
+        self.chat_display.tag_config("me", justify="right", foreground="white", background="#005C4B",
+                                       font=("Arial", 11), spacing1=4, spacing2=4, spacing3=4, lmargin1=80, lmargin2=80, rmargin1=10, rmargin2=10)
+        self.chat_display.tag_config("other", justify="left", foreground="white", background="#202C33",
+                                       font=("Arial", 11), spacing1=4, spacing2=4, spacing3=4, lmargin1=10, lmargin2=10, rmargin1=80, rmargin2=80)
+        self.chat_display.tag_config("system", justify="center", foreground="#8696A0", bg=bg_color, font=("Arial", 9))
+        inp = tk.Frame(self.root, bg="#1f2c33")
+        inp.pack(fill="x")
+        self.msg_entry = tk.Entry(inp, bg="#2a3942", fg="white", insertbackground="white", relief="flat",
+                                    font=("Arial", 12), borderwidth=0)
+        self.msg_entry.pack(side="left", fill="x", expand=True, padx=(8, 4), pady=8, ipady=6)
         self.msg_entry.bind("<Return>", lambda e: self.send_message())
-        tk.Button(inp, text="Enviar", bg="#4CAF50", fg="white", relief="flat", padx=20, command=self.send_message).pack(side="right")
+        tk.Button(inp, text="Enviar", bg="#00a884", fg="white", relief="flat", font=("Arial", 10, "bold"),
+                  padx=18, command=self.send_message).pack(side="right", padx=(0, 8), pady=8, ipady=4)
 
     def display_message(self, from_user, text, timestamp):
         self.chat_display.config(state="normal")
-        if timestamp:
-            t = datetime.fromtimestamp(timestamp / 1000).strftime("%H:%M")
-            self.chat_display.insert(tk.END, f"  {t}  ", "time")
         tag = "me" if from_user == "Yo" else "other"
-        self.chat_display.insert(tk.END, f"{from_user}: {text}\n", tag)
+        self.chat_display.insert(tk.END, f"{text}\n", tag)
         self.chat_display.see(tk.END)
         self.chat_display.config(state="disabled")
 

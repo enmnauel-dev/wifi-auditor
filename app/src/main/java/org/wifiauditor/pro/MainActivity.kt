@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -807,7 +808,28 @@ fun ToolsScreen(
     context: Context,
     vm: WiFiViewModel
 ) {
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+    Column(modifier = Modifier.fillMaxSize().imePadding()) {
+
+        // ── Variables del chat ──
+        val chatMessages by vm.chatMessages.collectAsState()
+        val chatServerRunning by vm.chatServerRunning.collectAsState()
+        val chatRelayConnected by vm.chatRelayConnected.collectAsState()
+        val guestList by vm.guestList.collectAsState()
+        val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
+        var chatTargetIp by remember { mutableStateOf(prefs?.getString("target_ip", "") ?: "") }
+        var chatRelayUrl by remember { mutableStateOf(prefs?.getString("relay_url", "") ?: "") }
+        var chatRelayPort by remember { mutableStateOf(prefs?.getString("relay_port", "56789") ?: "56789") }
+        var chatText by remember { mutableStateOf("") }
+        var useRelay by remember { mutableStateOf(false) }
+        var guestName by remember { mutableStateOf("Invitado") }
+        val chatListState = rememberLazyListState()
+        val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+
+        LaunchedEffect(chatMessages.size) {
+            if (chatMessages.isNotEmpty()) chatListState.animateScrollToItem(chatMessages.size - 1)
+        }
+
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp)) {
 
         // ── Passwords ──
         Text("Generador de contrasenas", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -936,24 +958,6 @@ fun ToolsScreen(
         Spacer(Modifier.height(16.dp))
 
         // ── Chat TCP ──
-        val chatMessages by vm.chatMessages.collectAsState()
-        val chatServerRunning by vm.chatServerRunning.collectAsState()
-        val chatRelayConnected by vm.chatRelayConnected.collectAsState()
-        val guestList by vm.guestList.collectAsState()
-        val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
-        var chatTargetIp by remember { mutableStateOf(prefs?.getString("target_ip", "") ?: "") }
-        var chatRelayUrl by remember { mutableStateOf(prefs?.getString("relay_url", "") ?: "") }
-        var chatRelayPort by remember { mutableStateOf(prefs?.getString("relay_port", "56789") ?: "56789") }
-        var chatText by remember { mutableStateOf("") }
-        var useRelay by remember { mutableStateOf(false) }
-        var guestName by remember { mutableStateOf("Invitado") }
-        val chatListState = rememberLazyListState()
-        val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-
-        LaunchedEffect(chatMessages.size) {
-            if (chatMessages.isNotEmpty()) chatListState.animateScrollToItem(chatMessages.size - 1)
-        }
-
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A5F))) {
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1065,61 +1069,52 @@ fun ToolsScreen(
             }
         }
         Spacer(Modifier.height(6.dp))
+    } // fin scrollable settings
 
-        Row {
-            OutlinedTextField(value = chatText, onValueChange = { chatText = it },
-                modifier = Modifier.weight(1f), singleLine = true,
-                placeholder = { Text("Mensaje...") },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
-                    val target = if (useRelay) chatRelayUrl else chatTargetIp
-                    if (target.isNotBlank() && chatText.isNotBlank()) {
-                        vm.sendChatMessage(target, chatText); chatText = ""
-                    }
-                }))
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = {
-                val target = if (useRelay) chatRelayUrl else chatTargetIp
-                vm.sendChatMessage(target, chatText); chatText = ""
-            }, modifier = Modifier.height(56.dp)) {
-                @Suppress("DEPRECATION")
-                Icon(Icons.Filled.Send, null)
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-
-        // Mensajes del chat
-        if (chatMessages.isNotEmpty()) {
-            Card(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
-                LazyColumn(state = chatListState, modifier = Modifier.padding(4.dp)) {
+        // ── Mensajes del chat (estilo WhatsApp) ──
+        Column(modifier = Modifier.weight(1f).fillMaxWidth().imePadding()) {
+            if (chatMessages.isNotEmpty()) {
+                LazyColumn(state = chatListState, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 6.dp)) {
                     items(chatMessages) { msg ->
-                        val bg = if (msg.fromMe) Color(0xFF1565C0) else Color(0xFF2E7D32)
-                        val align = if (msg.fromMe) Alignment.End else Alignment.Start
-                        val time = dateFormat.format(Date(msg.timestamp))
-                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalAlignment = align) {
-                            Box(modifier = Modifier.widthIn(max = 280.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                                topStart = 12.dp, topEnd = 12.dp,
-                                bottomStart = if (msg.fromMe) 12.dp else 4.dp,
-                                bottomEnd = if (msg.fromMe) 4.dp else 12.dp
-                            )).padding(10.dp)) {
-                                Text(msg.text, color = Color.White, fontSize = 14.sp)
+                        val isMe = msg.fromMe
+                        val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
+                            Box(modifier = Modifier.widthIn(max = 290.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                                16.dp, 16.dp, if (isMe) 16.dp else 4.dp, if (isMe) 4.dp else 16.dp
+                            )).padding(12.dp)) {
+                                Text(msg.text, color = Color.White, fontSize = 15.sp)
                             }
-                            Text(time, fontSize = 10.sp, color = Color(0xFF9E9E9E),
-                                modifier = Modifier.padding(horizontal = 4.dp))
                         }
                     }
                 }
+            } else {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Sin mensajes", fontSize = 13.sp, color = Color(0xFF8696A0))
+                }
             }
-        } else {
-            Card(modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF263238))) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Sin mensajes. Conectate y escribe un mensaje.",
-                        fontSize = 12.sp, color = Color(0xFF757575))
+            // Input field siempre al fondo
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                OutlinedTextField(value = chatText, onValueChange = { chatText = it },
+                    modifier = Modifier.weight(1f), singleLine = true,
+                    placeholder = { Text("Mensaje...") },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
+                        val target = if (useRelay) chatRelayUrl else chatTargetIp
+                        if (target.isNotBlank() && chatText.isNotBlank()) {
+                            vm.sendChatMessage(target, chatText); chatText = ""
+                        }
+                    }))
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = {
+                    val target = if (useRelay) chatRelayUrl else chatTargetIp
+                    vm.sendChatMessage(target, chatText); chatText = ""
+                }, modifier = Modifier.height(56.dp)) {
+                    @Suppress("DEPRECATION")
+                    Icon(Icons.Filled.Send, null)
                 }
             }
         }
-    }
+    } // fin outer Column
 }
 
 private fun saveReport(context: Context, vm: WiFiViewModel, format: String = "html") {
