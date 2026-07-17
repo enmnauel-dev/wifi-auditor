@@ -1456,6 +1456,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private var localAudioTrack: AudioTrack? = null
     private var remoteAudioTrack: AudioTrack? = null
     private val webrtcExecutor = Executors.newSingleThreadExecutor()
+    private var pendingOfferSdp: String? = null
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
@@ -1521,36 +1522,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleCallOffer(sdp: String, type: String) {
-        createPeerConnection()
-        addLocalAudio()
-        val desc = SessionDescription(SessionDescription.Type.OFFER, sdp)
-        peerConnection?.setRemoteDescription(object : SdpObserver {
-            override fun onSetSuccess() {
-                val constraints = MediaConstraints().apply {
-                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-                }
-                peerConnection?.createAnswer(object : SdpObserver {
-                    override fun onCreateSuccess(answer: SessionDescription) {
-                        peerConnection?.setLocalDescription(object : SdpObserver {
-                            override fun onSetSuccess() {
-                                val answerPayload = """{"sdp":"${answer.description.replace("\"","\\\"")}","type":"${answer.type}"}"""
-                                relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
-                                viewModelScope.launch(Dispatchers.Main) { _callState.value = CallState.Connected }
-                            }
-                            override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg" }
-                            override fun onCreateSuccess(d: SessionDescription) {}
-                            override fun onCreateFailure(m: String?) {}
-                        }, answer)
-                    }
-                    override fun onCreateFailure(msg: String?) { _status.value = "createAnswer: $msg" }
-                    override fun onSetSuccess() {}
-                    override fun onSetFailure(msg: String?) {}
-                }, constraints)
-            }
-            override fun onSetFailure(msg: String?) { _status.value = "setRemote: $msg"; hangup() }
-            override fun onCreateSuccess(d: SessionDescription) {}
-            override fun onCreateFailure(m: String?) {}
-        }, desc)
+        pendingOfferSdp = sdp
     }
 
     private fun handleCallAnswer(sdp: String, type: String) {
@@ -1596,34 +1568,45 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     fun answerCall() {
         if (_callState.value != CallState.Ringing) return
         _callState.value = CallState.Calling
-        _callerName.value = _callerName.value
         webrtcExecutor.execute {
-            val constraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            }
-            peerConnection?.createAnswer(object : SdpObserver {
-                override fun onCreateSuccess(desc: SessionDescription) {
-                    peerConnection?.setLocalDescription(object : SdpObserver {
-                        override fun onSetSuccess() {
-                            val answerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
-                            relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
-                            _callState.value = CallState.Connected
+            createPeerConnection()
+            addLocalAudio()
+            val offerSdp = pendingOfferSdp ?: return@execute
+            pendingOfferSdp = null
+            val offerDesc = SessionDescription(SessionDescription.Type.OFFER, offerSdp)
+            peerConnection?.setRemoteDescription(object : SdpObserver {
+                override fun onSetSuccess() {
+                    val constraints = MediaConstraints().apply {
+                        mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                    }
+                    peerConnection?.createAnswer(object : SdpObserver {
+                        override fun onCreateSuccess(desc: SessionDescription) {
+                            peerConnection?.setLocalDescription(object : SdpObserver {
+                                override fun onSetSuccess() {
+                                    val answerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
+                                    relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
+                                }
+                                override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
+                                override fun onCreateSuccess(d: SessionDescription) {}
+                                override fun onCreateFailure(m: String?) {}
+                            }, desc)
                         }
-                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
-                        override fun onCreateSuccess(d: SessionDescription) {}
-                        override fun onCreateFailure(m: String?) {}
-                    }, desc)
+                        override fun onCreateFailure(msg: String?) { _status.value = "createAnswer: $msg"; hangup() }
+                        override fun onSetSuccess() {}
+                        override fun onSetFailure(msg: String?) {}
+                    }, constraints)
                 }
-                override fun onCreateFailure(msg: String?) { _status.value = "createAnswer: $msg"; hangup() }
-                override fun onSetSuccess() {}
-                override fun onSetFailure(msg: String?) {}
-            }, constraints)
+                override fun onSetFailure(msg: String?) { _status.value = "setRemote: $msg"; hangup() }
+                override fun onCreateSuccess(d: SessionDescription) {}
+                override fun onCreateFailure(m: String?) {}
+            }, offerDesc)
         }
     }
 
     fun rejectCall() {
         if (_callState.value != CallState.Ringing) return
         relayWs?.send("""{"type":"call-busy","to":"${_callerId.value}","payload":{}}""")
+        pendingOfferSdp = null
         hangup()
     }
 
@@ -1635,6 +1618,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         }
         _callerId.value = ""
         _callerName.value = ""
+        pendingOfferSdp = null
         peerConnection?.close()
         peerConnection = null
         localAudioTrack = null

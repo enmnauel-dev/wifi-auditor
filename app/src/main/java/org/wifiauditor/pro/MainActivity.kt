@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestWifiPermissions() {
         val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        perms.add(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) {
             perms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
