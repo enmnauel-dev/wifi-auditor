@@ -1043,7 +1043,7 @@ fun MensajesScreen(
                                 Text("Destino BT: ${selectedBtDevice?.first}", fontSize = 10.sp, color = Color(0xFF64B5F6))
                             }
                         } else {
-                            var guestName by remember { mutableStateOf(prefs?.getString("guest_name", "Invitado") ?: "Invitado") }
+                            var guestName by remember { mutableStateOf(prefs?.getString("guest_name", "Telefono") ?: "Telefono") }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(if (chatRelayConnected) "Conectado al relay" else "Desconectado",
                                     fontSize = 10.sp, color = Color(0xFFB0BEC5))

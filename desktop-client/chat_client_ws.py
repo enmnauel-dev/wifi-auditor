@@ -276,7 +276,7 @@ class DesktopClient:
             self.connect_bt()
             return
         host = self.server_entry.get().strip()
-        nick = self.nick_entry.get().strip() or "Invitado"
+        nick = self.nick_entry.get().strip() or os.environ.get('COMPUTERNAME', 'PC')
         self.my_nick = nick
         save_config(server=host, nickname=nick)
         protocol = "wss" if ":443" in host else "ws"

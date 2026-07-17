@@ -73,7 +73,7 @@ wss.on('connection', ws => {
   let loggedUser = null;
   let isGuest = true;
   const guestId = 'g' + (++guestIdCounter);
-  guests.set(ws, { id: guestId, name: 'Invitado' });
+  guests.set(ws, { id: guestId, name: 'Usuario-' + guestId });
   sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
   broadcastGuestList();
   // Send waiting/paired status

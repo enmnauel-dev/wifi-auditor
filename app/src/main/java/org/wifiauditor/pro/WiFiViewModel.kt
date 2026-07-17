@@ -1278,10 +1278,9 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         val msg = ChatMessage(text, true)
         _chatMessages.value = _chatMessages.value + msg
         if (_chatRelayConnected.value && relayWs != null) {
-            val savedName = context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "Invitado") ?: "Invitado"
+            val savedName = context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "Android") ?: "Android"
             val json = """{"type":"message","from":"${savedName.replace("\"","\\\"")}","text":"${text.replace("\"","\\\"")}"}"""
             relayWs?.send(json)
-            _status.value = "Relay: mensaje enviado"
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
