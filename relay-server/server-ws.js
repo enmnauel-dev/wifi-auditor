@@ -76,7 +76,18 @@ wss.on('connection', ws => {
   guests.set(ws, { id: guestId, name: 'Invitado' });
   sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
   broadcastGuestList();
-  console.log(`Guest connected: ${guestId}`);
+  // Send waiting/paired status
+  const guestCount = guests.size;
+  if (guestCount >= 2) {
+    for (const [sock] of guests) {
+      if (sock.readyState === WebSocket.OPEN) {
+        sendJSON(sock, { type: 'paired' });
+      }
+    }
+  } else {
+    sendJSON(ws, { type: 'waiting' });
+  }
+  console.log(`Guest connected: ${guestId} (total: ${guestCount})`);
 
   ws.on('message', data => {
     try {
@@ -132,6 +143,14 @@ wss.on('connection', ws => {
       console.log(`${loggedUser} disconnected`);
     } else {
       guests.delete(ws);
+      // Notify remaining guest
+      if (guests.size === 1) {
+        for (const [sock] of guests) {
+          if (sock.readyState === WebSocket.OPEN) {
+            sendJSON(sock, { type: 'peer_disconnected' });
+          }
+        }
+      }
       broadcastGuestList();
       console.log(`Guest disconnected: ${guestId}`);
     }

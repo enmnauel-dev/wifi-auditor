@@ -13,17 +13,22 @@ import java.util.Date
 import java.util.Locale
 import android.net.Uri
 import android.os.Build
+import kotlinx.coroutines.launch
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -38,13 +43,19 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -57,6 +68,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         requestWifiPermissions()
         prefs = getSharedPreferences("wifichat", Context.MODE_PRIVATE)
         setContent {
@@ -76,15 +88,19 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             perms.add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        if (Build.VERSION.SDK_INT >= 31) {
+            perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+            perms.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
         val needed = perms.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isNotEmpty()) {
-            // Mostrar explicacion antes de pedir permisos (requisito Google Play)
             AlertDialog.Builder(this)
-                .setTitle("Permiso necesario")
-                .setMessage("WiFi Auditor Pro necesita acceso a la ubicacion para escanear redes WiFi cercanas. " +
-                        "No se usa tu ubicacion para ningun otro fin. Todos los datos se procesan localmente en tu dispositivo.")
+                .setTitle("Permisos necesarios")
+                .setMessage("WiFi Auditor Pro necesita acceso a la ubicacion para escanear redes WiFi, " +
+                        "y permisos Bluetooth para el chat de respaldo via Bluetooth. " +
+                        "No se usa tu ubicacion para ningun otro fin. Todos los datos se procesan localmente.")
                 .setPositiveButton("Continuar") { _, _ ->
                     permLauncher.launch(needed.toTypedArray())
                 }
@@ -114,9 +130,20 @@ fun WiFiAuditorTheme(content: @Composable () -> Unit) {
 @Composable
 fun WiFiAuditorApp(vm: WiFiViewModel = viewModel()) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Dashboard", "Redes", "Router", "Dispositivos", "Herramientas")
+    val tabs = listOf("Dashboard", "Redes", "Router", "Dispositivos", "MS")
     val icons = listOf(Icons.Filled.Dashboard, Icons.Filled.Wifi, Icons.Filled.Router,
-        Icons.Filled.Devices, Icons.Filled.Build)
+        Icons.Filled.Devices, Icons.Filled.ChatBubble)
+
+    val context = LocalContext.current
+    val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
+    val consentDone = remember { mutableStateOf(prefs?.getBoolean("privacy_consent", false) ?: false) }
+
+    if (!consentDone.value) {
+        PrivacyConsentDialog(onAccept = {
+            prefs?.edit()?.putBoolean("privacy_consent", true)?.apply()
+            consentDone.value = true
+        })
+    }
 
     val networks by vm.networks.collectAsState()
     val devices by vm.devices.collectAsState()
@@ -131,9 +158,6 @@ fun WiFiAuditorApp(vm: WiFiViewModel = viewModel()) {
     val sortMode by vm.sortMode.collectAsState()
     val settings by vm.settings.collectAsState()
     val traceroute by vm.traceroute.collectAsState()
-    val passwords by vm.passwords.collectAsState()
-    val monitorChanges by vm.monitorChanges.collectAsState()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -177,7 +201,7 @@ fun WiFiAuditorApp(vm: WiFiViewModel = viewModel()) {
                 1 -> NetworksScreen(networks, scanning, vm)
                 2 -> RouterScreen(routerInfo, ports, wpsResult, vulnResult, traceroute, vm)
                  3 -> DevicesScreen(devices, pingResult, vm, context)
-                4 -> ToolsScreen(passwords, monitorChanges, context, vm)
+                4 -> MensajesScreen(context, vm)
             }
         }
     }
@@ -450,6 +474,8 @@ fun RouterScreen(
     traceroute: List<String>, vm: WiFiViewModel
 ) {
     val networks by vm.networks.collectAsState()
+    var showToolsDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
         Text("Router conectado (Gateway)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -505,10 +531,21 @@ fun RouterScreen(
             ports.forEach { p ->
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                     Text("  Puerto ${p.port} - ${p.service}", modifier = Modifier.padding(8.dp))
-                }
             }
-            Spacer(Modifier.height(12.dp))
         }
+
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = { showToolsDialog = true }, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F))) {
+            Icon(Icons.Filled.Build, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp)); Text("Herramientas", fontSize = 14.sp)
+        }
+    }
+
+    if (showToolsDialog) {
+        ToolsDialog(vm = vm, context = context, onDismiss = { showToolsDialog = false })
+    }
+}
 
         if (networks.isNotEmpty()) {
             Text("Puntos de acceso detectados (${networks.size})", fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -533,11 +570,21 @@ fun RouterScreen(
                     }
                 }
             }
+
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { showToolsDialog = true }, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F))) {
+                Icon(Icons.Filled.Build, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp)); Text("Herramientas", fontSize = 14.sp)
+            }
+        }
+
+        if (showToolsDialog) {
+            ToolsDialog(vm = vm, context = context, onDismiss = { showToolsDialog = false })
         }
     }
-}
 
-// ── DISPOSITIVOS ──
+    // ── DISPOSITIVOS ──
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun DevicesScreen(
@@ -802,264 +849,226 @@ fun DevicesScreen(
 // ── HERRAMIENTAS ──
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ToolsScreen(
-    passwords: List<Pair<String, Int>>,
-    monitorChanges: List<String>,
+fun MensajesScreen(
     context: Context,
     vm: WiFiViewModel
 ) {
-    Column(modifier = Modifier.fillMaxSize().imePadding()) {
+    val chatMessages by vm.chatMessages.collectAsState()
+    val chatServerRunning by vm.chatServerRunning.collectAsState()
+    val chatRelayConnected by vm.chatRelayConnected.collectAsState()
+    val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
+    var chatTargetIp by remember { mutableStateOf(prefs?.getString("target_ip", "") ?: "") }
+    var chatRelayUrl by remember { mutableStateOf(prefs?.getString("relay_url", "wifi-auditor.onrender.com") ?: "wifi-auditor.onrender.com") }
+    var chatRelayPort by remember { mutableStateOf(prefs?.getString("relay_port", "443") ?: "443") }
+    var chatText by remember { mutableStateOf("") }
+    var useRelay by remember { mutableStateOf(false) }
 
-        // ── Variables del chat ──
-        val chatMessages by vm.chatMessages.collectAsState()
-        val chatServerRunning by vm.chatServerRunning.collectAsState()
-        val chatRelayConnected by vm.chatRelayConnected.collectAsState()
-        val guestList by vm.guestList.collectAsState()
-        val prefs = try { MainActivity.prefs } catch(_: Exception) { null }
-        var chatTargetIp by remember { mutableStateOf(prefs?.getString("target_ip", "") ?: "") }
-        var chatRelayUrl by remember { mutableStateOf(prefs?.getString("relay_url", "") ?: "") }
-        var chatRelayPort by remember { mutableStateOf(prefs?.getString("relay_port", "56789") ?: "56789") }
-        var chatText by remember { mutableStateOf("") }
-        var useRelay by remember { mutableStateOf(false) }
-        var guestName by remember { mutableStateOf("Invitado") }
-        val chatListState = rememberLazyListState()
-        val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val chatListState = rememberLazyListState()
+    val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val isAtBottom = remember { derivedStateOf {
+        val info = chatListState.layoutInfo
+        if (chatMessages.isEmpty()) true
+        else info.visibleItemsInfo.any { it.index >= chatMessages.size - 1 }
+    } }
+    var unseenCount by remember { mutableIntStateOf(0) }
+    val coroutineScope = rememberCoroutineScope()
+    val btEnabled by vm.btEnabled.collectAsState()
+    val btServerRunning by vm.btServerRunning.collectAsState()
+    val btDeviceList by vm.btDeviceList.collectAsState()
+    val selectedBtDevice by vm.selectedBtDevice.collectAsState()
+    val btConnected by vm.btConnected.collectAsState()
 
-        LaunchedEffect(chatMessages.size) {
-            if (chatMessages.isNotEmpty()) chatListState.animateScrollToItem(chatMessages.size - 1)
-        }
+    LaunchedEffect(Unit) { vm.initBluetooth(context) }
 
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp)) {
-
-        // ── Passwords ──
-        Text("Generador de contrasenas", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Button(onClick = { vm.generatePasswords() }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Lock, null); Spacer(Modifier.width(8.dp)); Text("Generar 4 contrasenas seguras")
-        }
-        passwords.forEach { (pw, bits) ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1a237e))
-            ) {
-                Text(pw, modifier = Modifier.padding(12.dp), fontSize = 16.sp,
-                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                Text("  ~${bits} bits de entropia",
-                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
-                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) {
+            if (isAtBottom.value) {
+                chatListState.animateScrollToItem(chatMessages.size - 1)
+                unseenCount = 0
+            } else {
+                unseenCount++
             }
         }
+    }
 
-        Spacer(Modifier.height(16.dp))
+    LaunchedEffect(Unit) {
+        snapshotFlow { chatListState.firstVisibleItemIndex }
+            .collect { if (it >= chatMessages.size - 1) unseenCount = 0 }
+    }
 
-        // ── Report ──
-        Text("Exportar reporte", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { saveReport(context, vm, "html") },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
-            ) {
-                Icon(Icons.Filled.FileDownload, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp)); Text("HTML", fontSize = 13.sp)
-            }
-            Button(
-                onClick = { saveReport(context, vm, "csv") },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-            ) {
-                Icon(Icons.Filled.FileDownload, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp)); Text("CSV", fontSize = 13.sp)
-            }
-            Button(
-                onClick = { saveReport(context, vm, "json") },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6A1B9A))
-            ) {
-                Icon(Icons.Filled.FileDownload, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp)); Text("JSON", fontSize = 13.sp)
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // ── Configuracion ──
-        val settings by vm.settings.collectAsState()
-        Text("Configuracion", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Notificaciones", modifier = Modifier.weight(1f), fontSize = 14.sp)
-                    Switch(checked = settings.notificationsEnabled, onCheckedChange = { vm.toggleNotifications() })
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Intervalo de escaneo: ${settings.scanIntervalSec}s", fontSize = 14.sp)
-                Slider(
-                    value = settings.scanIntervalSec.toFloat(),
-                    onValueChange = { vm.setScanInterval(it.toInt()) },
-                    valueRange = 5f..60f,
-                    steps = 10,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Text("5s", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                    Text("60s", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // ── Privacidad ──
-        Text("Privacidad", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Button(
-            onClick = {
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    data = Uri.parse("https://github.com/tuusuario/wifi-auditor-pro/blob/main/PRIVACY_POLICY.md")
-                }
-                context.startActivity(intent)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6A1B9A))
-        ) {
-            Icon(Icons.Filled.Shield, null); Spacer(Modifier.width(8.dp)); Text("Politica de privacidad")
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // ── Monitor ──
-        Text("Monitor continuo", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.startMonitor() }, modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))) {
-                Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp)); Text("Iniciar")
-            }
-            Button(onClick = { vm.stopMonitor() }, modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFd32f2f))) {
-                Icon(Icons.Filled.Stop, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp)); Text("Detener")
-            }
-        }
-        monitorChanges.forEach { msg ->
-            val color = if (msg.startsWith("+")) Color(0xFF4CAF50)
-                       else if (msg.startsWith("-")) Color(0xFFf44336)
-                       else Color.White
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
-                Text(msg, modifier = Modifier.padding(8.dp), fontSize = 12.sp, color = color,
-                    fontFamily = FontFamily.Monospace)
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // ── Chat TCP ──
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A5F))) {
-            Column(Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Chat, null, Modifier.size(20.dp), tint = Color(0xFF64B5F6))
+    Scaffold(
+        containerColor = Color.Transparent,
+        bottomBar = {
+            Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF1F2C33), shadowElevation = 8.dp) {
+                Row(modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp).padding(bottom = 120.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(value = chatText, onValueChange = { chatText = it },
+                        modifier = Modifier.weight(1f), singleLine = true,
+                        placeholder = { Text("Mensaje...", color = Color(0xFF8696A0)) },
+                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = Color(0xFF00A884),
+                            focusedContainerColor = Color(0xFF2A3942),
+                            unfocusedContainerColor = Color(0xFF2A3942),
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            val target = if (useRelay) chatRelayUrl else chatTargetIp
+                            if (target.isNotBlank() && chatText.isNotBlank()) {
+                                vm.sendChatMessage(target, chatText); chatText = ""
+                            }
+                        }))
                     Spacer(Modifier.width(6.dp))
-                    Text("Chat TCP", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-                    Spacer(Modifier.weight(1f))
-                    FilterChip(
-                        selected = useRelay,
-                        onClick = {
-                            useRelay = !useRelay
-                            if (!useRelay) vm.disconnectRelay()
-                            if (useRelay) vm.stopChatServer()
-                        },
-                        label = { Text(if (useRelay) "Remoto" else "Local", fontSize = 11.sp, color = Color.White) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = if (useRelay) Color(0xFF1565C0) else Color(0xFF388E3C),
-                            selectedContainerColor = Color(0xFF1565C0)
-                        )
-                    )
+                    FilledIconButton(onClick = {
+                        val target = if (useRelay) chatRelayUrl else chatTargetIp
+                        vm.sendChatMessage(target, chatText); chatText = ""
+                    }, modifier = Modifier.size(42.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFF00A884)),
+                        shape = CircleShape) {
+                        Icon(Icons.Filled.Send, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
                 }
-                Spacer(Modifier.height(8.dp))
+            }
+        }
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
 
-                if (!useRelay) {
-                    // Modo Local
+        // ── Mensajes del chat (estilo WhatsApp) ──
+        Column(modifier = Modifier.weight(1f).fillMaxWidth().background(Color(0xFF0B141A))) {
+            // ── Compact Chat TCP connection bar ──
+            var expanded by remember { mutableStateOf(false) }
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E3A5F))) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).background(if (chatServerRunning) Color(0xFF4CAF50) else Color(0xFF757575), CircleShape))
+                        Icon(Icons.Filled.Chat, null, Modifier.size(16.dp), tint = Color(0xFF64B5F6))
                         Spacer(Modifier.width(4.dp))
-                        Text(if (chatServerRunning) "Server: ${vm.chatLocalIp}" else "Server apagado",
-                            fontSize = 11.sp, color = Color(0xFFB0BEC5))
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (chatServerRunning) vm.stopChatServer() else vm.startChatServer() },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = if (chatServerRunning) Color(0xFFd32f2f) else Color(0xFF388E3C))) {
-                            Icon(if (chatServerRunning) Icons.Filled.Stop else Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp)); Text(if (chatServerRunning) "Detener server" else "Iniciar server", color = Color.White)
-                        }
-                        Button(onClick = { vm.clearChat() }, modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))) {
-                            Icon(Icons.Filled.Delete, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp)); Text("Limpiar", color = Color.White)
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(value = chatTargetIp, onValueChange = { chatTargetIp = it; prefs?.edit()?.putString("target_ip", it)?.apply() },
-                            label = { Text("IP destino") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            placeholder = { Text("Ej: 192.168.1.50") })
-                } else {
-                    // Modo Remoto
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).background(if (chatRelayConnected) Color(0xFF4CAF50) else Color(0xFF757575), CircleShape))
+                        Text("Chat TCP", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                        Spacer(Modifier.width(6.dp))
+                        Box(Modifier.size(6.dp).background(
+                            if (useRelay) (if (chatRelayConnected) Color(0xFF4CAF50) else Color(0xFF757575))
+                            else (if (chatServerRunning) Color(0xFF4CAF50) else Color(0xFF757575)), CircleShape))
+                        Spacer(Modifier.weight(1f))
+                        FilterChip(
+                            selected = useRelay,
+                            onClick = {
+                                useRelay = !useRelay
+                                if (!useRelay) vm.disconnectRelay()
+                                if (useRelay) vm.stopChatServer()
+                            },
+                            label = { Text(if (useRelay) "Remoto" else "Local", fontSize = 10.sp, color = Color.White) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = if (useRelay) Color(0xFF1565C0) else Color(0xFF388E3C),
+                                selectedContainerColor = Color(0xFF1565C0)
+                            ), modifier = Modifier.height(26.dp)
+                        )
                         Spacer(Modifier.width(4.dp))
-                        Text(if (chatRelayConnected) "Conectado al relay" else "Desconectado",
-                            fontSize = 11.sp, color = Color(0xFFB0BEC5))
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        OutlinedTextField(value = chatRelayUrl, onValueChange = { chatRelayUrl = it; prefs?.edit()?.putString("relay_url", it)?.apply() },
-                            modifier = Modifier.weight(1f), singleLine = true,
-                            label = { Text("Servidor relay") },
-                            placeholder = { Text("ej: mirelay.railway.app") })
-                        OutlinedTextField(value = chatRelayPort, onValueChange = { chatRelayPort = it; prefs?.edit()?.putString("relay_port", it)?.apply() },
-                            modifier = Modifier.width(80.dp), singleLine = true,
-                            label = { Text("Puerto") })
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            if (chatRelayConnected) vm.disconnectRelay()
-                            else vm.connectRelay(chatRelayUrl, chatRelayPort.toIntOrNull() ?: 56789)
-                        }, modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = if (chatRelayConnected) Color(0xFFd32f2f) else Color(0xFF1565C0))) {
-                            Icon(if (chatRelayConnected) Icons.Filled.Stop else Icons.Filled.Cloud, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp)); Text(if (chatRelayConnected) "Desconectar" else "Conectar relay", color = Color.White)
-                        }
-                        Button(onClick = { vm.clearChat() }, modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))) {
-                            Icon(Icons.Filled.Delete, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp)); Text("Limpiar", color = Color.White)
+                        IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(24.dp)) {
+                            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null, Modifier.size(18.dp), tint = Color.White)
                         }
                     }
-                    // Guest list when connected
-                    if (chatRelayConnected) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(value = guestName, onValueChange = { guestName = it; vm.setGuestName(it) },
-                                modifier = Modifier.weight(1f), singleLine = true,
-                                label = { Text("Tu apodo") })
-                        }
-                        if (guestList.isNotEmpty()) {
+                    if (expanded) {
+                        Divider(color = Color(0xFF455A64), modifier = Modifier.padding(vertical = 4.dp))
+                        if (!useRelay) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (chatServerRunning) "Server: ${vm.chatLocalIp}" else "Server apagado",
+                                    fontSize = 10.sp, color = Color(0xFFB0BEC5))
+                                Spacer(Modifier.weight(1f))
+                                Button(onClick = { if (chatServerRunning) vm.stopChatServer() else vm.startChatServer() },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (chatServerRunning) Color(0xFFd32f2f) else Color(0xFF388E3C))) {
+                                    Text(if (chatServerRunning) "Detener" else "Iniciar", fontSize = 11.sp, color = Color.White)
+                                }
+                            }
                             Spacer(Modifier.height(4.dp))
-                            Text("Usuarios conectados:", fontSize = 11.sp, color = Color(0xFF90CAF9))
-                            Spacer(Modifier.height(2.dp))
-                            LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
-                                items(guestList) { (id, name) ->
-                                    TextButton(onClick = { vm.selectGuest(id) },
-                                        modifier = Modifier.fillMaxWidth()) {
-                                        Icon(Icons.Filled.Person, null, Modifier.size(16.dp), tint = Color(0xFF4CAF50))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(name, fontSize = 13.sp, color = Color.White)
+                            OutlinedTextField(value = chatTargetIp, onValueChange = { chatTargetIp = it; prefs?.edit()?.putString("target_ip", it)?.apply() },
+                                label = { Text("IP destino") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                                placeholder = { Text("Ej: 192.168.1.50") }, textStyle = TextStyle(fontSize = 13.sp))
+                            Spacer(Modifier.height(6.dp))
+                            Divider(color = Color(0xFF455A64), modifier = Modifier.padding(vertical = 2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Bluetooth, null, Modifier.size(16.dp), tint = if (btEnabled) Color(0xFF2196F3) else Color(0xFF757575))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Bluetooth", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                                Spacer(Modifier.width(4.dp))
+                                Box(Modifier.size(5.dp).background(if (btEnabled) Color(0xFF4CAF50) else Color(0xFF757575), CircleShape))
+                                Spacer(Modifier.weight(1f))
+                                Button(
+                                    onClick = { if (btServerRunning) vm.stopBtServer() else vm.startBtServer() },
+                                    modifier = Modifier.height(26.dp),
+                                    enabled = btEnabled,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (btServerRunning) Color(0xFFd32f2f) else Color(0xFF1565C0),
+                                        disabledContainerColor = Color(0xFF37474F)
+                                    )) {
+                                    Text(if (btServerRunning) "Detener BT" else "Iniciar BT", fontSize = 10.sp,
+                                        color = if (btEnabled) Color.White else Color(0xFF757575))
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Button(onClick = { vm.scanBtDevices() }, modifier = Modifier.height(26.dp),
+                                    enabled = btEnabled,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF1565C0),
+                                        disabledContainerColor = Color(0xFF37474F)
+                                    )) {
+                                    Text("Escanear", fontSize = 10.sp,
+                                        color = if (btEnabled) Color.White else Color(0xFF757575))
+                                }
+                            }
+                            if (btDeviceList.isNotEmpty()) {
+                                Spacer(Modifier.height(4.dp))
+                                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState())) {
+                                    btDeviceList.forEach { (name, addr) ->
+                                        val isSelected = selectedBtDevice?.second == addr
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
+                                            if (isSelected) vm.clearBtSelection() else vm.selectBtDevice(addr, name)
+                                        }.padding(vertical = 2.dp).background(if (isSelected) Color(0xFF1E3A5F) else Color.Transparent, RoundedCornerShape(4.dp))) {
+                                            Icon(if (isSelected) Icons.Filled.Bluetooth else Icons.Filled.Devices, null, Modifier.size(14.dp), tint = if (isSelected) Color(0xFF2196F3) else Color(0xFF90CAF9))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("$name ($addr)", fontSize = 10.sp, color = if (isSelected) Color.White else Color(0xFFB0BEC5), modifier = Modifier.weight(1f))
+                                            Text(if (isSelected) "Seleccionado" else "Elegir", fontSize = 9.sp, color = if (isSelected) Color(0xFF4CAF50) else Color(0xFF64B5F6))
+                                        }
+                                    }
+                                }
+                            }
+                            if (selectedBtDevice != null) {
+                                Spacer(Modifier.height(2.dp))
+                                Text("Destino BT: ${selectedBtDevice?.first}", fontSize = 10.sp, color = Color(0xFF64B5F6))
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (chatRelayConnected) "Conectado al relay" else "Desconectado",
+                                    fontSize = 10.sp, color = Color(0xFFB0BEC5))
+                                Spacer(Modifier.weight(1f))
+                                Button(onClick = {
+                                    if (chatRelayConnected) vm.disconnectRelay()
+                                    else vm.connectRelay(chatRelayUrl, chatRelayPort.toIntOrNull() ?: 443)
+                                }, modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (chatRelayConnected) Color(0xFFd32f2f) else Color(0xFF1565C0))) {
+                                    Text(if (chatRelayConnected) "Desconectar" else "Conectar", fontSize = 11.sp, color = Color.White)
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            if (chatRelayConnected) {
+                                Spacer(Modifier.height(4.dp))
+                                var guestName by remember { mutableStateOf("Invitado") }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(value = guestName, onValueChange = { guestName = it; vm.setGuestName(it) },
+                                        modifier = Modifier.weight(1f), singleLine = true,
+                                        label = { Text("Tu apodo") }, textStyle = TextStyle(fontSize = 13.sp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Button(onClick = { vm.clearChat() }, modifier = Modifier.height(28.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))) {
+                                        Icon(Icons.Filled.Delete, null, Modifier.size(14.dp), tint = Color.White)
                                     }
                                 }
                             }
@@ -1067,22 +1076,34 @@ fun ToolsScreen(
                     }
                 }
             }
-        }
-        Spacer(Modifier.height(6.dp))
-    } // fin scrollable settings
-
-        // ── Mensajes del chat (estilo WhatsApp) ──
-        Column(modifier = Modifier.weight(1f).fillMaxWidth().imePadding()) {
             if (chatMessages.isNotEmpty()) {
-                LazyColumn(state = chatListState, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 6.dp)) {
-                    items(chatMessages) { msg ->
-                        val isMe = msg.fromMe
-                        val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
-                        Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
-                            Box(modifier = Modifier.widthIn(max = 290.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                                16.dp, 16.dp, if (isMe) 16.dp else 4.dp, if (isMe) 4.dp else 16.dp
-                            )).padding(12.dp)) {
-                                Text(msg.text, color = Color.White, fontSize = 15.sp)
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(state = chatListState, modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp)) {
+                        items(count = chatMessages.size, key = { it }) { pos ->
+                            val msg = chatMessages[pos]
+                            val isMe = msg.fromMe
+                            val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
+                            Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
+                                Box(modifier = Modifier.widthIn(max = 290.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                                    16.dp, 16.dp, if (isMe) 16.dp else 4.dp, if (isMe) 4.dp else 16.dp
+                                )).padding(12.dp)) {
+                                    Text(msg.text, color = Color.White, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+                    androidx.compose.animation.AnimatedVisibility(visible = unseenCount > 0, enter = slideInVertically { it }, exit = slideOutVertically { it },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp)) {
+                        FloatingActionButton(onClick = {
+                            coroutineScope.launch { chatListState.animateScrollToItem(chatMessages.size - 1) }
+                            unseenCount = 0
+                        }, containerColor = Color(0xFF00A884)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 18.dp)) {
+                                Icon(Icons.Filled.KeyboardArrowDown, null, tint = Color.White)
+                                if (unseenCount > 1) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("$unseenCount", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
                             }
                         }
                     }
@@ -1092,29 +1113,114 @@ fun ToolsScreen(
                     Text("Sin mensajes", fontSize = 13.sp, color = Color(0xFF8696A0))
                 }
             }
-            // Input field siempre al fondo
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                OutlinedTextField(value = chatText, onValueChange = { chatText = it },
-                    modifier = Modifier.weight(1f), singleLine = true,
-                    placeholder = { Text("Mensaje...") },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
-                        val target = if (useRelay) chatRelayUrl else chatTargetIp
-                        if (target.isNotBlank() && chatText.isNotBlank()) {
-                            vm.sendChatMessage(target, chatText); chatText = ""
-                        }
-                    }))
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = {
-                    val target = if (useRelay) chatRelayUrl else chatTargetIp
-                    vm.sendChatMessage(target, chatText); chatText = ""
-                }, modifier = Modifier.height(56.dp)) {
-                    @Suppress("DEPRECATION")
-                    Icon(Icons.Filled.Send, null)
-                }
-            }
-        }
+        } // fin chat section Column
     } // fin outer Column
+    } // fin Scaffold
+}
+
+@Composable
+fun ToolsDialog(vm: WiFiViewModel, context: Context, onDismiss: () -> Unit) {
+    val passwords by vm.passwords.collectAsState()
+    val monitorChanges by vm.monitorChanges.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f),
+        title = { Text("Herramientas", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Generador de contrasenas", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Button(onClick = { vm.generatePasswords() }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Lock, null); Spacer(Modifier.width(8.dp)); Text("Generar 4 contrasenas seguras")
+                }
+                passwords.forEach { (pw, bits) ->
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1a237e))) {
+                        Text(pw, modifier = Modifier.padding(12.dp), fontSize = 14.sp,
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        Text("  ~${bits} bits", modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
+                            fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Exportar reporte", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = { saveReport(context, vm, "html") }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))) {
+                        Icon(Icons.Filled.FileDownload, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(2.dp)); Text("HTML", fontSize = 11.sp)
+                    }
+                    Button(onClick = { saveReport(context, vm, "csv") }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))) {
+                        Icon(Icons.Filled.FileDownload, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(2.dp)); Text("CSV", fontSize = 11.sp)
+                    }
+                    Button(onClick = { saveReport(context, vm, "json") }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6A1B9A))) {
+                        Icon(Icons.Filled.FileDownload, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(2.dp)); Text("JSON", fontSize = 11.sp)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                val settings by vm.settings.collectAsState()
+                Text("Configuracion", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text("Notificaciones", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            Switch(checked = settings.notificationsEnabled, onCheckedChange = { vm.toggleNotifications() })
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text("Vibrar al recibir mensaje", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            Switch(checked = settings.vibrateOnMessage, onCheckedChange = { vm.toggleVibrateOnMessage() })
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text("Intervalo: ${settings.scanIntervalSec}s", fontSize = 13.sp)
+                        Slider(value = settings.scanIntervalSec.toFloat(),
+                            onValueChange = { vm.setScanInterval(it.toInt()) },
+                            valueRange = 5f..60f, steps = 10)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        data = Uri.parse("https://github.com/tuusuario/wifi-auditor-pro/blob/main/PRIVACY_POLICY.md")
+                    })
+                }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6A1B9A))) {
+                    Icon(Icons.Filled.Shield, null); Spacer(Modifier.width(8.dp)); Text("Politica de privacidad")
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Monitor continuo", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { vm.startMonitor() }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))) {
+                        Icon(Icons.Filled.PlayArrow, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp)); Text("Iniciar", fontSize = 12.sp)
+                    }
+                    Button(onClick = { vm.stopMonitor() }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFd32f2f))) {
+                        Icon(Icons.Filled.Stop, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp)); Text("Detener", fontSize = 12.sp)
+                    }
+                }
+                monitorChanges.forEach { msg ->
+                    val color = if (msg.startsWith("+")) Color(0xFF4CAF50)
+                               else if (msg.startsWith("-")) Color(0xFFf44336)
+                               else Color.White
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                        Text(msg, modifier = Modifier.padding(6.dp), fontSize = 11.sp, color = color,
+                            fontFamily = FontFamily.Monospace)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
+    )
 }
 
 private fun saveReport(context: Context, vm: WiFiViewModel, format: String = "html") {
@@ -1159,4 +1265,32 @@ private fun saveReport(context: Context, vm: WiFiViewModel, format: String = "ht
     } catch (e: Exception) {
         vm.setStatus("Error: ${e.message}")
     }
+}
+
+@Composable
+fun PrivacyConsentDialog(onAccept: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Privacidad", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("WiFi Auditor Pro respeta tu privacidad.\n\n" +
+                    "Esta aplicacion:\n\n" +
+                    "• Escanea redes WiFi cercanas para propositos educativos y de diagnostico.\n\n" +
+                    "• Accede a la ubicacion (requisito de Android para escanear WiFi). No se almacena ni transmite tu ubicacion.\n\n" +
+                    "• Detecta dispositivos en tu red local (IP, MAC, fabricante). Esta informacion no sale de tu dispositivo.\n\n" +
+                    "• El chat TCP local funciona sin internet, directamente entre dispositivos en la misma red.\n\n" +
+                    "• El chat remoto via WebSocket solo transmite los mensajes que envias voluntariamente.\n\n" +
+                    "• NO recopila datos personales.\n" +
+                    "• NO comparte datos con terceros.\n" +
+                    "• NO usa publicidad.\n" +
+                    "• Todos los datos de escaneo se procesan localmente.\n\n" +
+                    "Al aceptar, confirmas que usaras esta herramienta unicamente en redes propias o con autorizacion explicita del propietario.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAccept) { Text("Aceptar", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {}
+    )
 }
