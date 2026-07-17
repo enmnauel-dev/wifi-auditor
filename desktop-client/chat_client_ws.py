@@ -129,6 +129,7 @@ class DesktopClient:
         self.bt_devices_frame.pack(fill="x", padx=40, pady=5)
         self.bt_devices = []
 
+        self.ws_frame = tk.Frame(frame, bg="#1a1a2e")
         tk.Label(self.ws_frame, text="Tu apodo:", fg="white", bg="#1a1a2e", anchor="w").pack(fill="x", padx=40)
         self.nick_entry = tk.Entry(self.ws_frame, bg="#0f3460", fg="white", insertbackground="white", relief="flat")
         self.nick_entry.pack(fill="x", padx=40, pady=(0, 5), ipady=4)
