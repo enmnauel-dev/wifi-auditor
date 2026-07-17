@@ -538,6 +538,8 @@ class DesktopClient:
             s.listen(1)
             s.settimeout(1)
             self.tcp_server_sock = s
+            self.root.after(0, lambda: self.status_lbl.config(
+                text=f"Servidor TCP en puerto 56789 - esperando mensajes..."))
             while self.running:
                 try:
                     conn, addr = s.accept()
