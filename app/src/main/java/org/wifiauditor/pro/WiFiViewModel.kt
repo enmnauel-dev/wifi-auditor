@@ -1199,18 +1199,23 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private var relayWs: WebSocket? = null
     private val okHttp = OkHttpClient.Builder().readTimeout(0, java.util.concurrent.TimeUnit.SECONDS).build()
 
-    fun connectRelay(host: String, port: Int) {
+    fun connectRelay(host: String, port: Int, guestName: String = "") {
         disconnectRelay()
         _status.value = "Conectando..."
         val cleanHost = host.trim().removePrefix("https://").removePrefix("http://").removePrefix("wss://").removePrefix("ws://").split("/").first().split(":").first()
         val protocol = if (port == 443) "wss" else "ws"
         val url = "$protocol://$cleanHost:$port"
+        val nameToSend = if (guestName.isNotBlank()) guestName
+            else context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "") ?: ""
         val request = okhttp3.Request.Builder().url(url).build()
         relayWs = okHttp.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: okhttp3.Response) {
                 _chatRelayConnected.value = true
                 _status.value = "Conectado al relay"
                 _chatMessages.value = _chatMessages.value + ChatMessage("--- Conectado al relay ---", false)
+                if (nameToSend.isNotBlank()) {
+                    ws.send("""{"type":"set_name","name":"$nameToSend"}""")
+                }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
@@ -1273,7 +1278,8 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         val msg = ChatMessage(text, true)
         _chatMessages.value = _chatMessages.value + msg
         if (_chatRelayConnected.value && relayWs != null) {
-            val json = """{"type":"message","text":"${text.replace("\"","\\\"")}"}"""
+            val savedName = context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "Invitado") ?: "Invitado"
+            val json = """{"type":"message","from":"${savedName.replace("\"","\\\"")}","text":"${text.replace("\"","\\\"")}"}"""
             relayWs?.send(json)
             _status.value = "Relay: mensaje enviado"
             return

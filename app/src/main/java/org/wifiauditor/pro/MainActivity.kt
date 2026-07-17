@@ -1043,13 +1043,14 @@ fun MensajesScreen(
                                 Text("Destino BT: ${selectedBtDevice?.first}", fontSize = 10.sp, color = Color(0xFF64B5F6))
                             }
                         } else {
+                            var guestName by remember { mutableStateOf(prefs?.getString("guest_name", "Invitado") ?: "Invitado") }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(if (chatRelayConnected) "Conectado al relay" else "Desconectado",
                                     fontSize = 10.sp, color = Color(0xFFB0BEC5))
                                 Spacer(Modifier.weight(1f))
                                 Button(onClick = {
                                     if (chatRelayConnected) vm.disconnectRelay()
-                                    else vm.connectRelay(chatRelayUrl, chatRelayPort.toIntOrNull() ?: 443)
+                                    else vm.connectRelay(chatRelayUrl, chatRelayPort.toIntOrNull() ?: 443, guestName)
                                 }, modifier = Modifier.height(28.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = if (chatRelayConnected) Color(0xFFd32f2f) else Color(0xFF1565C0))) {
@@ -1057,19 +1058,15 @@ fun MensajesScreen(
                                 }
                             }
                             Spacer(Modifier.height(4.dp))
-                            if (chatRelayConnected) {
-                                Spacer(Modifier.height(4.dp))
-                                var guestName by remember { mutableStateOf("Invitado") }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    OutlinedTextField(value = guestName, onValueChange = { guestName = it; vm.setGuestName(it) },
-                                        modifier = Modifier.weight(1f), singleLine = true,
-                                        label = { Text("Tu apodo") }, textStyle = TextStyle(fontSize = 13.sp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Button(onClick = { vm.clearChat() }, modifier = Modifier.height(28.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))) {
-                                        Icon(Icons.Filled.Delete, null, Modifier.size(14.dp), tint = Color.White)
-                                    }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = guestName, onValueChange = { guestName = it; prefs?.edit()?.putString("guest_name", it)?.apply(); vm.setGuestName(it) },
+                                    modifier = Modifier.weight(1f), singleLine = true,
+                                    label = { Text("Tu apodo") }, textStyle = TextStyle(fontSize = 13.sp))
+                                Spacer(Modifier.width(4.dp))
+                                Button(onClick = { vm.clearChat() }, modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))) {
+                                    Icon(Icons.Filled.Delete, null, Modifier.size(14.dp), tint = Color.White)
                                 }
                             }
                         }

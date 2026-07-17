@@ -111,19 +111,18 @@ wss.on('connection', ws => {
         } else if (msg.type === 'message') {
           const from = guests.get(ws);
           if (!from) return;
+          const senderName = msg.from || from.name;
           if (msg.to) {
-            // Direct message to specific guest
             for (const [targetWs, info] of guests) {
               if (info.id === msg.to && targetWs.readyState === WebSocket.OPEN) {
-                sendJSON(targetWs, { type: 'message', from: from.name, from_id: from.id, text: msg.text });
+                sendJSON(targetWs, { type: 'message', from: senderName, from_id: from.id, text: msg.text });
                 break;
               }
             }
           } else {
-            // Broadcast to all other guests
             for (const [targetWs, info] of guests) {
               if (targetWs !== ws && targetWs.readyState === WebSocket.OPEN) {
-                sendJSON(targetWs, { type: 'message', from: from.name, from_id: from.id, text: msg.text });
+                sendJSON(targetWs, { type: 'message', from: senderName, from_id: from.id, text: msg.text });
               }
             }
           }
