@@ -79,19 +79,11 @@ wss.on('connection', ws => {
   broadcastGuestList();
   const guestCount = guests.size;
   console.log(`Guest connected: ${guestId} (total: ${guestCount}) - ${defaultName}`);
-  if (guestCount >= 2) {
-    console.log(`  -> sending paired to new guest ${guestId}`);
-    sendJSON(ws, { type: 'paired' });
-    for (const [sock, info] of guests) {
-      if (sock !== ws && sock.readyState === WebSocket.OPEN) {
-        console.log(`  -> sending paired + user_joined to ${info.id}`);
-        sendJSON(sock, { type: 'paired' });
-        sendJSON(sock, { type: 'user_joined', id: guestId, name: defaultName, count: guestCount });
-      }
+  sendJSON(ws, { type: 'paired', count: guestCount });
+  for (const [sock, info] of guests) {
+    if (sock !== ws && sock.readyState === WebSocket.OPEN) {
+      sendJSON(sock, { type: 'user_joined', id: guestId, name: defaultName, count: guestCount });
     }
-  } else {
-    console.log(`  -> sending waiting to ${guestId}`);
-    sendJSON(ws, { type: 'waiting' });
   }
 
   ws.on('message', data => {
@@ -152,18 +144,19 @@ wss.on('connection', ws => {
       console.log(`${loggedUser} disconnected`);
     } else {
       const guestInfo = guests.get(ws);
+      const leftInfo = guestInfo ? guestInfo.name : 'unknown';
       guests.delete(ws);
+      broadcastGuestList();
       if (guests.size >= 1) {
-        for (const [sock] of guests) {
+        for (const [sock, info] of guests) {
           if (sock.readyState === WebSocket.OPEN) {
             if (guests.size === 1) {
               sendJSON(sock, { type: 'peer_disconnected' });
             }
-            sendJSON(sock, { type: 'user_left', id: guestId, name: guestInfo ? guestInfo.name : 'unknown', count: guests.size });
+            sendJSON(sock, { type: 'user_left', id: guestId, name: leftInfo, count: guests.size });
           }
         }
       }
-      broadcastGuestList();
       console.log(`Guest disconnected: ${guestId}`);
     }
   });
