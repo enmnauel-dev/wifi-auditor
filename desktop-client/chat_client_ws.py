@@ -157,6 +157,7 @@ class DesktopClient:
     def show_mode(self):
         self.bt_frame.pack_forget()
         self.ws_frame.pack_forget()
+        self.tcp_frame.pack_forget()
         if self.use_tcp:
             self.mode_lbl.config(text="Modo: TCP Local")
             self.tcp_frame.pack(fill="x", pady=5)
