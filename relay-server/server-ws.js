@@ -73,15 +73,17 @@ wss.on('connection', ws => {
   let loggedUser = null;
   let isGuest = true;
   const guestId = 'g' + (++guestIdCounter);
-  guests.set(ws, { id: guestId, name: 'Usuario-' + guestId });
+  const defaultName = 'Usuario-' + guestId;
+  guests.set(ws, { id: guestId, name: defaultName });
   sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
   broadcastGuestList();
-  // Send waiting/paired status
   const guestCount = guests.size;
   if (guestCount >= 2) {
+    // Notify all about new user
     for (const [sock] of guests) {
       if (sock.readyState === WebSocket.OPEN) {
         sendJSON(sock, { type: 'paired' });
+        sendJSON(sock, { type: 'user_joined', id: guestId, name: defaultName, count: guestCount });
       }
     }
   } else {
@@ -105,6 +107,11 @@ wss.on('connection', ws => {
           if (info && msg.name) {
             info.name = msg.name.substring(0, 20);
             broadcastGuestList();
+            for (const [sock] of guests) {
+              if (sock !== ws && sock.readyState === WebSocket.OPEN) {
+                sendJSON(sock, { type: 'user_renamed', id: info.id, name: info.name });
+              }
+            }
           }
         } else if (msg.type === 'get_guests') {
           sendJSON(ws, { type: 'guest_list', guests: guestList() });
@@ -141,12 +148,15 @@ wss.on('connection', ws => {
       notifyFriends(loggedUser, 'friend_offline');
       console.log(`${loggedUser} disconnected`);
     } else {
+      const guestInfo = guests.get(ws);
       guests.delete(ws);
-      // Notify remaining guest
-      if (guests.size === 1) {
+      if (guests.size >= 1) {
         for (const [sock] of guests) {
           if (sock.readyState === WebSocket.OPEN) {
-            sendJSON(sock, { type: 'peer_disconnected' });
+            if (guests.size === 1) {
+              sendJSON(sock, { type: 'peer_disconnected' });
+            }
+            sendJSON(sock, { type: 'user_left', id: guestId, name: guestInfo ? guestInfo.name : 'unknown', count: guests.size });
           }
         }
       }

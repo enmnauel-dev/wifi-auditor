@@ -379,10 +379,27 @@ class DesktopClient:
             self.status_lbl.config(text="Esperando otro dispositivo...")
         elif t == "paired":
             self.status_lbl.config(text="Conectado!")
-            self.display_system("Conectado a otro dispositivo!")
+            count = msg.get("count", 2)
+            self.display_system(f"Conectado! ({count} dispositivos en sala)")
         elif t == "peer_disconnected":
             self.status_lbl.config(text="El otro dispositivo se desconecto")
             self.display_system("El otro dispositivo se desconecto")
+        elif t == "user_joined":
+            name = msg.get("name", "Alguien")
+            count = msg.get("count", 0)
+            self.status_lbl.config(text=f"{count} dispositivos conectados")
+            self.display_system(f"{name} se unio ({count} en sala)")
+        elif t == "user_left":
+            name = msg.get("name", "Alguien")
+            count = msg.get("count", 0)
+            if count <= 1:
+                self.status_lbl.config(text="Esperando otro dispositivo...")
+            else:
+                self.status_lbl.config(text=f"{count} dispositivos conectados")
+            self.display_system(f"{name} se fue ({count} restantes)")
+        elif t == "user_renamed":
+            name = msg.get("name", "Alguien")
+            self.display_system(f"Alguien ahora es {name}")
         elif t == "ok":
             self.status_lbl.config(text=msg.get("text", ""))
         elif t == "error":

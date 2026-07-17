@@ -1238,6 +1238,23 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                 addIncomingMessage("$from: $t")
                             }
                         }
+                        "user_joined" -> {
+                            val name = json.optString("name", "Alguien")
+                            val count = json.optInt("count", 0)
+                            addIncomingMessage("--- $name se unio ($count en sala) ---")
+                            _status.value = "$count dispositivos conectados"
+                        }
+                        "user_left" -> {
+                            val name = json.optString("name", "Alguien")
+                            val count = json.optInt("count", 0)
+                            addIncomingMessage("--- $name se fue ($count restantes) ---")
+                            if (count <= 1) _status.value = "Esperando otro dispositivo..."
+                            else _status.value = "$count dispositivos conectados"
+                        }
+                        "user_renamed" -> {
+                            val name = json.optString("name", "Alguien")
+                            addIncomingMessage("--- Alguien ahora es $name ---")
+                        }
                         "error" -> _status.value = "Relay error: ${json.optString("text", "")}"
                         "ok" -> _status.value = "Relay: ${json.optString("text", "")}"
                     }
