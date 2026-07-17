@@ -59,7 +59,7 @@ function broadcastGuestList() {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/status') {
+  if (req.url && req.url.includes('/status')) {
     const guestListArr = [];
     for (const [, info] of guests) { guestListArr.push(info); }
     res.writeHead(200, {'Content-Type': 'application/json'});
@@ -67,7 +67,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('WiFi Auditor Relay Server running');
+  res.end('WiFi Auditor Relay v2 running');
 });
 
 const wss = new WebSocket.Server({ server });
