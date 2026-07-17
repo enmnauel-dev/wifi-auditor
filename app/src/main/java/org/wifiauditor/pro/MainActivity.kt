@@ -1080,11 +1080,24 @@ fun MensajesScreen(
                             val msg = chatMessages[pos]
                             val isMe = msg.fromMe
                             val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
-                            Box(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
+                            val timeStr = remember(msg.timestamp) {
+                                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
+                            }
+                            Box(modifier = Modifier.fillMaxWidth().padding(top = 1.dp, bottom = 1.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
                                 Box(modifier = Modifier.widthIn(max = 290.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
                                     16.dp, 16.dp, if (isMe) 16.dp else 4.dp, if (isMe) 4.dp else 16.dp
-                                )).padding(12.dp)) {
-                                    Text(msg.text, color = Color.White, fontSize = 15.sp)
+                                )).padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+                                    Column {
+                                        Text(msg.text, color = Color.White, fontSize = 15.sp)
+                                        Spacer(Modifier.height(2.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.End)) {
+                                            Text(timeStr, color = Color(0xFF8696A0), fontSize = 11.sp)
+                                            if (isMe) {
+                                                Spacer(Modifier.width(3.dp))
+                                                Icon(Icons.Filled.Check, null, modifier = Modifier.size(14.dp), tint = Color(0xFF8696A0))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

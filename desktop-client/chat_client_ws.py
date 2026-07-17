@@ -487,9 +487,11 @@ class DesktopClient:
         self.chat_display.pack(fill="both", expand=True)
         scroll.config(command=self.chat_display.yview)
         self.chat_display.tag_config("me", justify="right", foreground="#90CAF9",
-                                       font=("Arial", 11), spacing1=4, spacing2=4, spacing3=4, lmargin1=80)
+                                       font=("Arial", 11), spacing1=2, spacing2=2, spacing3=2, lmargin1=80)
         self.chat_display.tag_config("other", justify="left", foreground="#A5D6A7",
-                                       font=("Arial", 11), spacing1=4, spacing2=4, spacing3=4, lmargin1=10)
+                                       font=("Arial", 11), spacing1=2, spacing2=2, spacing3=2, lmargin1=10)
+        self.chat_display.tag_config("time", justify="right", foreground="#8696A0",
+                                       font=("Arial", 8), spacing1=0, spacing2=0, spacing3=0)
         self.chat_display.tag_config("system", justify="center", foreground="#8696A0", font=("Arial", 9))
         inp = tk.Frame(self.root, bg="#1f2c33")
         inp.pack(fill="x")
@@ -502,9 +504,15 @@ class DesktopClient:
 
     def display_message(self, from_user, text, timestamp):
         self.chat_display.config(state="normal")
-        tag = "me" if from_user == "Yo" else "other"
-        label = "" if from_user == "Yo" else f"{from_user}: "
-        self.chat_display.insert(tk.END, f"{label}{text}\n", tag)
+        ts = datetime.fromtimestamp(timestamp / 1000).strftime("%H:%M") if timestamp else ""
+        if from_user == "Yo":
+            self.chat_display.insert(tk.END, f"  {text}\n", "me")
+            if ts:
+                self.chat_display.insert(tk.END, f"     {ts} \u2713\n", "time")
+        else:
+            self.chat_display.insert(tk.END, f"{from_user}: {text}\n", "other")
+            if ts:
+                self.chat_display.insert(tk.END, f"  {ts}\n", "time")
         self.chat_display.see(tk.END)
         self.chat_display.config(state="disabled")
 
