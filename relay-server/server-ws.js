@@ -59,6 +59,13 @@ function broadcastGuestList() {
 }
 
 const server = http.createServer((req, res) => {
+  if (req.url === '/status') {
+    const guestListArr = [];
+    for (const [, info] of guests) { guestListArr.push(info); }
+    res.writeHead(200, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({ guests: guestListArr, count: guests.size, version: '66bdcd7' }));
+    return;
+  }
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('WiFi Auditor Relay Server running');
 });
