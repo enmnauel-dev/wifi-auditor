@@ -412,6 +412,16 @@ class DesktopClient:
         t = msg.get("type")
         if t == "waiting":
             self.status_lbl.config(text="Esperando otro dispositivo...")
+        elif t == "init":
+            my_id = msg.get("id", "")
+            self.guest_id = my_id
+            guests = msg.get("guests", [])
+            self._update_guests_label(guests)
+        elif t == "guest_list":
+            guests = msg.get("guests", [])
+            self._update_guests_label(guests)
+            count = msg.get("count", len(guests))
+            self.status_lbl.config(text=f"{len(guests)} dispositivos")
         elif t == "paired":
             self.status_lbl.config(text="Conectado!")
             count = msg.get("count", 2)
@@ -461,6 +471,15 @@ class DesktopClient:
         elif t == "friend_request_accepted":
             messagebox.showinfo("Amigos", f"{msg['by']} acepto tu solicitud!")
 
+    def _update_guests_label(self, guests):
+        if not hasattr(self, 'guests_lbl'): return
+        my_id = getattr(self, 'guest_id', '')
+        names = [g['name'] for g in guests if g['id'] != my_id]
+        if names:
+            self.guests_lbl.config(text="Conectados: " + ", ".join(names), fg="#90CAF9")
+        else:
+            self.guests_lbl.config(text="Esperando otros dispositivos...", fg="#8696A0")
+
     def display_system(self, text):
         self.chat_display.config(state="normal")
         self.chat_display.insert(tk.END, f"  {text}\n", "system")
@@ -476,6 +495,8 @@ class DesktopClient:
         self.status_lbl.pack(side="left", padx=8)
         tk.Button(top, text="Desconectar", bg="#d32f2f", fg="white", relief="flat", font=("Arial", 9),
                   command=self.disconnect).pack(side="right", padx=10, pady=8)
+        self.guests_lbl = tk.Label(top, text="", fg="#90CAF9", bg="#075E54", font=("Arial", 8))
+        self.guests_lbl.pack(fill="x", padx=14)
         bg_color = "#0B141A"
         self.chat_frame = tk.Frame(self.root, bg=bg_color)
         self.chat_frame.pack(fill="both", expand=True)
