@@ -94,6 +94,15 @@ wss.on('connection', ws => {
               }
             }
           }
+        } else if (['call-offer', 'call-answer', 'ice-candidate', 'call-hangup', 'call-busy'].includes(msg.type)) {
+          const from = guests.get(ws);
+          if (!from || !msg.to) return;
+          for (const [targetWs, info] of guests) {
+            if (info.id === msg.to && targetWs.readyState === WebSocket.OPEN) {
+              sendJSON(targetWs, { type: msg.type, from_id: from.id, from_name: from.name, payload: msg.payload });
+              break;
+            }
+          }
         }
     } catch (e) {
       sendJSON(ws, { type: 'error', text: 'invalid JSON' });

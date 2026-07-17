@@ -878,6 +878,10 @@ fun MensajesScreen(
     val btServerRunning by vm.btServerRunning.collectAsState()
     val btDeviceList by vm.btDeviceList.collectAsState()
     val selectedBtDevice by vm.selectedBtDevice.collectAsState()
+    val callState by vm.callState.collectAsState()
+    val callerName by vm.callerName.collectAsState()
+    val myGuestId by vm.myGuestId.collectAsState()
+    val guestList by vm.guestList.collectAsState()
     val btConnected by vm.btConnected.collectAsState()
 
     LaunchedEffect(Unit) { vm.initBluetooth(context) }
@@ -1071,6 +1075,46 @@ fun MensajesScreen(
                                     Icon(Icons.Filled.Delete, null, Modifier.size(14.dp), tint = Color.White)
                                 }
                             }
+                            if (chatRelayConnected && guestList.isNotEmpty()) {
+                                Spacer(Modifier.height(4.dp))
+                                Divider(color = Color(0xFF455A64), modifier = Modifier.padding(vertical = 1.dp))
+                                guestList.filter { it.id != myGuestId }.forEach { guest ->
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                        Icon(Icons.Filled.Person, null, Modifier.size(14.dp), tint = Color(0xFF90CAF9))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(guest.name, fontSize = 11.sp, color = Color.White, modifier = Modifier.weight(1f))
+                                        Button(onClick = { vm.startCall(guest.id, guest.name) },
+                                            modifier = Modifier.height(26.dp),
+                                            enabled = callState.name == "Idle",
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))) {
+                                            Icon(Icons.Filled.Phone, null, Modifier.size(12.dp), tint = Color.White)
+                                            Spacer(Modifier.width(2.dp))
+                                            Text("Llamar", fontSize = 9.sp, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Active call bar
+            if (callState.name == "Calling" || callState.name == "Connected") {
+                Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF075E54)) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.PhoneInTalk, null, Modifier.size(18.dp), tint = Color.White)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Llamada ${if (callState.name == "Calling") "llamando..." else "activa"}", color = Color.White, fontSize = 13.sp)
+                            if (callerName.isNotEmpty()) Text(callerName, color = Color(0xFFB2DFDB), fontSize = 11.sp)
+                        }
+                        Button(onClick = { vm.hangup() }, modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))) {
+                            Icon(Icons.Filled.CallEnd, null, Modifier.size(16.dp), tint = Color.White)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Colgar", fontSize = 11.sp, color = Color.White)
                         }
                     }
                 }
@@ -1148,6 +1192,35 @@ fun MensajesScreen(
         } // fin chat section Column
     } // fin outer Column
     } // fin Scaffold
+    // Incoming call dialog
+    if (callState.name == "Ringing") {
+        AlertDialog(
+            onDismissRequest = { vm.rejectCall() },
+            title = { Text("Llamada entrante", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.PhoneInTalk, null, Modifier.size(48.dp), tint = Color(0xFF4CAF50))
+                    Spacer(Modifier.height(8.dp))
+                    Text(callerName.ifEmpty { "Invitado" }, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text("te esta llamando...", fontSize = 14.sp, color = Color(0xFF8696A0))
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.answerCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) {
+                    Icon(Icons.Filled.Phone, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Responder")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { vm.rejectCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))) {
+                    Icon(Icons.Filled.CallEnd, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Rechazar")
+                }
+            }
+        )
+    }
 }
 
 @Composable

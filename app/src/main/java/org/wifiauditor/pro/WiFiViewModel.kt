@@ -45,6 +45,8 @@ import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import org.webrtc.*
+import java.util.concurrent.Executors
 
 data class ConnectedDevice(
     val ip: String, val mac: String, val vendor: String = "Desconocido",
@@ -1206,6 +1208,8 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     val chatRelayConnected: StateFlow<Boolean> = _chatRelayConnected.asStateFlow()
     private var relayWs: WebSocket? = null
     private val okHttp = OkHttpClient.Builder().readTimeout(0, java.util.concurrent.TimeUnit.SECONDS).build()
+    private val _myGuestId = MutableStateFlow("")
+    private val _guestList = MutableStateFlow<List<GuestInfo>>(emptyList())
 
     fun connectRelay(host: String, port: Int, guestName: String = "") {
         disconnectRelay()
@@ -1265,6 +1269,74 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         "error" -> _status.value = "Relay error: ${json.optString("text", "")}"
                         "ok" -> _status.value = "Relay: ${json.optString("text", "")}"
+                        "init" -> {
+                            _myGuestId.value = json.optString("id", "")
+                            val guestsArr = json.optJSONArray("guests")
+                            if (guestsArr != null) {
+                                val list = mutableListOf<GuestInfo>()
+                                for (i in 0 until guestsArr.length()) {
+                                    val g = guestsArr.getJSONObject(i)
+                                    list.add(GuestInfo(g.optString("id", ""), g.optString("name", "")))
+                                }
+                                _guestList.value = list
+                            }
+                        }
+                        "guest_list" -> {
+                            val guestsArr = json.optJSONArray("guests")
+                            if (guestsArr != null) {
+                                val list = mutableListOf<GuestInfo>()
+                                for (i in 0 until guestsArr.length()) {
+                                    val g = guestsArr.getJSONObject(i)
+                                    list.add(GuestInfo(g.optString("id", ""), g.optString("name", "")))
+                                }
+                                _guestList.value = list
+                            }
+                        }
+                        "call-offer" -> {
+                            val from = json.optString("from_id", "")
+                            val fromName = json.optString("from_name", "Invitado")
+                            val payload = json.optJSONObject("payload")
+                            if (payload != null && _callState.value == CallState.Idle) {
+                                _callerId.value = from
+                                _callerName.value = fromName
+                                _callState.value = CallState.Ringing
+                                val sdp = payload.optString("sdp", "")
+                                val type = payload.optString("type", "offer")
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    handleCallOffer(sdp, type)
+                                }
+                            } else if (payload != null) {
+                                relayWs?.send("""{"type":"call-busy","to":"$from","payload":{}}""")
+                            }
+                        }
+                        "call-answer" -> {
+                            val payload = json.optJSONObject("payload")
+                            if (payload != null) {
+                                val sdp = payload.optString("sdp", "")
+                                val type = payload.optString("type", "answer")
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    handleCallAnswer(sdp, type)
+                                }
+                            }
+                        }
+                        "ice-candidate" -> {
+                            val payload = json.optJSONObject("payload")
+                            if (payload != null && _callState.value == CallState.Connected && peerConnection != null) {
+                                val candidate = payload.optString("candidate", "")
+                                val sdpMid = payload.optString("sdpMid", "")
+                                val sdpMLineIndex = payload.optInt("sdpMLineIndex", 0)
+                                if (candidate.isNotEmpty()) {
+                                    peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                }
+                            }
+                        }
+                        "call-hangup" -> {
+                            viewModelScope.launch { hangup() }
+                        }
+                        "call-busy" -> {
+                            _status.value = "La otra persona esta ocupada"
+                            viewModelScope.launch { hangup() }
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -1360,6 +1432,215 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    // ── WebRTC Calling ──
+
+    enum class CallState { Idle, Calling, Ringing, Connected }
+    data class GuestInfo(val id: String, val name: String)
+
+    private val _callState = MutableStateFlow(CallState.Idle)
+    val callState: StateFlow<CallState> = _callState.asStateFlow()
+
+    private val _callerName = MutableStateFlow("")
+    val callerName: StateFlow<String> = _callerName.asStateFlow()
+
+    private val _callerId = MutableStateFlow("")
+
+    val myGuestId: StateFlow<String> = _myGuestId.asStateFlow()
+    val guestList: StateFlow<List<GuestInfo>> = _guestList.asStateFlow()
+
+    private var pcFactory: PeerConnectionFactory? = null
+    private var peerConnection: PeerConnection? = null
+    private var localAudioSource: AudioSource? = null
+    private var localAudioTrack: AudioTrack? = null
+    private var remoteAudioTrack: AudioTrack? = null
+    private val webrtcExecutor = Executors.newSingleThreadExecutor()
+
+    private val iceServers = listOf(
+        PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
+        PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443").createIceServer()
+    )
+
+    private fun initWebRTC() {
+        if (pcFactory != null) return
+        PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+            .createInitializationOptions()
+            .also { PeerConnectionFactory.initialize(it) }
+        pcFactory = PeerConnectionFactory.builder()
+            .setOptions(PeerConnectionFactory.Options())
+            .createPeerConnectionFactory()
+    }
+
+    private fun createPeerConnection(): PeerConnection? {
+        initWebRTC()
+        val config = PeerConnection.RTCConfiguration(iceServers)
+        config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+        val observer = object : PeerConnection.Observer {
+            override fun onIceCandidate(candidate: IceCandidate) {
+                val cid = _callerId.value
+                if (cid.isNotEmpty() && relayWs != null) {
+                    val payload = """{"candidate":"${candidate.sdp.replace("\"","\\\"")}","sdpMid":"${candidate.sdpMid}","sdpMLineIndex":${candidate.sdpMLineIndex}}"""
+                    relayWs?.send("""{"type":"ice-candidate","to":"$cid","payload":$payload}""")
+                }
+            }
+            override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
+                val track = receiver.track() ?: return
+                if (track.kind() == "audio") {
+                    remoteAudioTrack = track as? AudioTrack
+                }
+            }
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                if (state == PeerConnection.IceConnectionState.DISCONNECTED || state == PeerConnection.IceConnectionState.FAILED) {
+                    viewModelScope.launch { hangup() }
+                } else if (state == PeerConnection.IceConnectionState.CONNECTED) {
+                    _callState.value = CallState.Connected
+                }
+            }
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+            override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+            override fun onAddStream(stream: MediaStream?) {}
+            override fun onRemoveStream(stream: MediaStream?) {}
+            override fun onRenegotiationNeeded() {}
+            override fun onDataChannel(channel: DataChannel?) {}
+        }
+        peerConnection = pcFactory?.createPeerConnection(config, observer)
+        return peerConnection
+    }
+
+    private fun addLocalAudio() {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+        }
+        localAudioSource = pcFactory?.createAudioSource(constraints)
+        localAudioTrack = pcFactory?.createAudioTrack("audio_0", localAudioSource)
+        localAudioTrack?.setEnabled(true)
+        peerConnection?.addTrack(localAudioTrack, listOf("audio_0"))
+    }
+
+    private fun handleCallOffer(sdp: String, type: String) {
+        createPeerConnection()
+        addLocalAudio()
+        val desc = SessionDescription(SessionDescription.Type.OFFER, sdp)
+        peerConnection?.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                }
+                peerConnection?.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(answer: SessionDescription) {
+                        peerConnection?.setLocalDescription(object : SdpObserver {
+                            override fun onSetSuccess() {
+                                val answerPayload = """{"sdp":"${answer.description.replace("\"","\\\"")}","type":"${answer.type}"}"""
+                                relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
+                                viewModelScope.launch(Dispatchers.Main) { _callState.value = CallState.Connected }
+                            }
+                            override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg" }
+                            override fun onCreateSuccess(d: SessionDescription) {}
+                            override fun onCreateFailure(m: String?) {}
+                        }, answer)
+                    }
+                    override fun onCreateFailure(msg: String?) { _status.value = "createAnswer: $msg" }
+                    override fun onSetSuccess() {}
+                    override fun onSetFailure(msg: String?) {}
+                }, constraints)
+            }
+            override fun onSetFailure(msg: String?) { _status.value = "setRemote: $msg"; hangup() }
+            override fun onCreateSuccess(d: SessionDescription) {}
+            override fun onCreateFailure(m: String?) {}
+        }, desc)
+    }
+
+    private fun handleCallAnswer(sdp: String, type: String) {
+        val desc = SessionDescription(SessionDescription.Type.ANSWER, sdp)
+        peerConnection?.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() { _status.value = "Llamada establecida" }
+            override fun onSetFailure(msg: String?) { _status.value = "setRemote: $msg" }
+            override fun onCreateSuccess(d: SessionDescription) {}
+            override fun onCreateFailure(m: String?) {}
+        }, desc)
+    }
+
+    fun startCall(targetId: String, targetName: String) {
+        if (_callState.value != CallState.Idle) return
+        _callState.value = CallState.Calling
+        _callerName.value = targetName
+        _callerId.value = targetId
+        webrtcExecutor.execute {
+            createPeerConnection()
+            addLocalAudio()
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            }
+            peerConnection?.createOffer(object : SdpObserver {
+                override fun onCreateSuccess(desc: SessionDescription) {
+                    peerConnection?.setLocalDescription(object : SdpObserver {
+                        override fun onSetSuccess() {
+                            val offerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
+                            relayWs?.send("""{"type":"call-offer","to":"$targetId","payload":$offerPayload}""")
+                        }
+                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
+                        override fun onCreateSuccess(d: SessionDescription) {}
+                        override fun onCreateFailure(m: String?) {}
+                    }, desc)
+                }
+                override fun onCreateFailure(msg: String?) { _status.value = "createOffer: $msg"; hangup() }
+                override fun onSetSuccess() {}
+                override fun onSetFailure(msg: String?) {}
+            }, constraints)
+        }
+    }
+
+    fun answerCall() {
+        if (_callState.value != CallState.Ringing) return
+        _callState.value = CallState.Calling
+        _callerName.value = _callerName.value
+        webrtcExecutor.execute {
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            }
+            peerConnection?.createAnswer(object : SdpObserver {
+                override fun onCreateSuccess(desc: SessionDescription) {
+                    peerConnection?.setLocalDescription(object : SdpObserver {
+                        override fun onSetSuccess() {
+                            val answerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
+                            relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
+                            _callState.value = CallState.Connected
+                        }
+                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
+                        override fun onCreateSuccess(d: SessionDescription) {}
+                        override fun onCreateFailure(m: String?) {}
+                    }, desc)
+                }
+                override fun onCreateFailure(msg: String?) { _status.value = "createAnswer: $msg"; hangup() }
+                override fun onSetSuccess() {}
+                override fun onSetFailure(msg: String?) {}
+            }, constraints)
+        }
+    }
+
+    fun rejectCall() {
+        if (_callState.value != CallState.Ringing) return
+        relayWs?.send("""{"type":"call-busy","to":"${_callerId.value}","payload":{}}""")
+        hangup()
+    }
+
+    fun hangup() {
+        _callState.value = CallState.Idle
+        val cid = _callerId.value
+        if (cid.isNotEmpty() && relayWs != null) {
+            relayWs?.send("""{"type":"call-hangup","to":"$cid","payload":{}}""")
+        }
+        _callerId.value = ""
+        _callerName.value = ""
+        peerConnection?.close()
+        peerConnection = null
+        localAudioTrack = null
+        localAudioSource?.dispose()
+        localAudioSource = null
+        remoteAudioTrack = null
     }
 
     fun clearChat() {
