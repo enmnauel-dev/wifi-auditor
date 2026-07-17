@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const http = require('http');
 const PORT = process.env.PORT || 10000;
+const DEPLOY_TIME = Date.now();
 
 function sendJSON(ws, data) {
   try { ws.send(JSON.stringify(data)); } catch (e) {}
@@ -31,11 +32,11 @@ const server = http.createServer((req, res) => {
     const guestListArr = [];
     for (const [, info] of guests) { guestListArr.push(info); }
     res.writeHead(200, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify({ guests: guestListArr, count: guests.size, version: '66bdcd7' }));
+    res.end(JSON.stringify({ guests: guestListArr, count: guests.size, deployed: DEPLOY_TIME, version: 'e94824a' }));
     return;
   }
   res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('WiFi Auditor Relay v2 running');
+  res.end(`WiFi Auditor Relay v2 (${new Date().toISOString()})`);
 });
 
 const wss = new WebSocket.Server({ server });
