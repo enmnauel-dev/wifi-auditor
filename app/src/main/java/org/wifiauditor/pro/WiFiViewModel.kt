@@ -1481,8 +1481,17 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             override fun onIceCandidate(candidate: IceCandidate) {
                 val cid = _callerId.value
                 if (cid.isNotEmpty() && relayWs != null) {
-                    val payload = """{"candidate":"${candidate.sdp.replace("\"","\\\"")}","sdpMid":"${candidate.sdpMid}","sdpMLineIndex":${candidate.sdpMLineIndex}}"""
-                    relayWs?.send("""{"type":"ice-candidate","to":"$cid","payload":$payload}""")
+                    val payloadObj = org.json.JSONObject().apply {
+                        put("candidate", candidate.sdp)
+                        put("sdpMid", candidate.sdpMid)
+                        put("sdpMLineIndex", candidate.sdpMLineIndex)
+                    }
+                    val msgObj = org.json.JSONObject().apply {
+                        put("type", "ice-candidate")
+                        put("to", cid)
+                        put("payload", payloadObj)
+                    }
+                    relayWs?.send(msgObj.toString())
                 }
             }
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
@@ -1550,8 +1559,16 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     peerConnection?.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
-                            val offerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
-                            relayWs?.send("""{"type":"call-offer","to":"$targetId","payload":$offerPayload}""")
+                            val payloadObj = org.json.JSONObject().apply {
+                                put("sdp", desc.description)
+                                put("type", desc.type.canonicalForm())
+                            }
+                            val msgObj = org.json.JSONObject().apply {
+                                put("type", "call-offer")
+                                put("to", targetId)
+                                put("payload", payloadObj)
+                            }
+                            relayWs?.send(msgObj.toString())
                         }
                         override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
                         override fun onCreateSuccess(d: SessionDescription) {}
@@ -1583,8 +1600,16 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                         override fun onCreateSuccess(desc: SessionDescription) {
                             peerConnection?.setLocalDescription(object : SdpObserver {
                                 override fun onSetSuccess() {
-                                    val answerPayload = """{"sdp":"${desc.description.replace("\"","\\\"")}","type":"${desc.type}"}"""
-                                    relayWs?.send("""{"type":"call-answer","to":"${_callerId.value}","payload":$answerPayload}""")
+                                    val payloadObj = org.json.JSONObject().apply {
+                                        put("sdp", desc.description)
+                                        put("type", desc.type.canonicalForm())
+                                    }
+                                    val msgObj = org.json.JSONObject().apply {
+                                        put("type", "call-answer")
+                                        put("to", _callerId.value)
+                                        put("payload", payloadObj)
+                                    }
+                                    relayWs?.send(msgObj.toString())
                                 }
                                 override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
                                 override fun onCreateSuccess(d: SessionDescription) {}
