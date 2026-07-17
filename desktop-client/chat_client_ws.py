@@ -94,7 +94,9 @@ class DesktopClient:
         self.cfg = load_config()
         self.my_nick = "Invitado"
         self.use_bt = False
+        self.use_tcp = False
         self.bt_target = ""
+        self.tcp_target = ""
         self.build_login_screen()
 
     def clear(self):
@@ -109,7 +111,7 @@ class DesktopClient:
         tk.Label(frame, text="WiFi Auditor Chat", font=("Arial", 18, "bold"), fg="#64B5F6", bg="#1a1a2e").pack(pady=(0, 10))
         self.mode_lbl = tk.Label(frame, text="Modo: WebSocket", font=("Arial", 10), fg="#FFB74D", bg="#1a1a2e")
         self.mode_lbl.pack()
-        tk.Button(frame, text="Cambiar a Bluetooth", bg="#1565C0", fg="white", relief="flat", padx=20, pady=5, command=self.toggle_mode).pack(pady=5)
+        tk.Button(frame, text="Cambiar modo", bg="#1565C0", fg="white", relief="flat", padx=20, pady=5, command=self.toggle_mode).pack(pady=5)
 
         self.bt_frame = tk.Frame(frame, bg="#1a1a2e")
         tk.Label(self.bt_frame, text="Dispositivo Bluetooth:", fg="white", bg="#1a1a2e", anchor="w").pack(fill="x", padx=40)
@@ -136,6 +138,12 @@ class DesktopClient:
         self.server_entry.pack(fill="x", padx=40, pady=(0, 10), ipady=4)
         self.server_entry.insert(0, self.cfg.get("server", "wifi-auditor.onrender.com:443"))
 
+        self.tcp_frame = tk.Frame(frame, bg="#1a1a2e")
+        tk.Label(self.tcp_frame, text="IP del telefono:", fg="white", bg="#1a1a2e", anchor="w").pack(fill="x", padx=40)
+        self.tcp_entry = tk.Entry(self.tcp_frame, bg="#0f3460", fg="white", insertbackground="white", relief="flat")
+        self.tcp_entry.pack(fill="x", padx=40, pady=(0, 5), ipady=4)
+        self.tcp_entry.insert(0, self.cfg.get("tcp_ip", "192.168.1."))
+
         self.status_lbl = tk.Label(frame, text="", fg="#FFB74D", bg="#1a1a2e")
         self.status_lbl.pack()
         btn_frame = tk.Frame(frame, bg="#1a1a2e")
@@ -147,17 +155,26 @@ class DesktopClient:
         self.show_mode()
 
     def show_mode(self):
-        if self.use_bt:
+        self.bt_frame.pack_forget()
+        self.ws_frame.pack_forget()
+        if self.use_tcp:
+            self.mode_lbl.config(text="Modo: TCP Local")
+            self.tcp_frame.pack(fill="x", pady=5)
+        elif self.use_bt:
             self.mode_lbl.config(text="Modo: Bluetooth")
-            self.ws_frame.pack_forget()
             self.bt_frame.pack(fill="x", pady=5)
         else:
             self.mode_lbl.config(text="Modo: WebSocket")
-            self.bt_frame.pack_forget()
             self.ws_frame.pack(fill="x")
 
     def toggle_mode(self):
-        self.use_bt = not self.use_bt
+        if self.use_bt:
+            self.use_bt = False
+            self.use_tcp = True
+        elif self.use_tcp:
+            self.use_tcp = False
+        else:
+            self.use_bt = True
         self.show_mode()
 
     def scan_bt(self):
@@ -272,6 +289,16 @@ class DesktopClient:
         self.root.after(0, self.on_disconnect)
 
     def connect_guest(self):
+        if self.use_tcp:
+            ip = self.tcp_entry.get().strip()
+            if not ip:
+                messagebox.showwarning("TCP", "Ingresa la IP del telefono")
+                return
+            self.tcp_target = ip
+            save_config(tcp_ip=ip)
+            self.running = True
+            self.root.after(0, self.build_main_screen)
+            return
         if self.use_bt:
             self.connect_bt()
             return
@@ -478,7 +505,16 @@ class DesktopClient:
         if not text: return
         self.msg_entry.delete(0, tk.END)
         self.display_message("Yo", text, int(datetime.now().timestamp() * 1000))
-        if self.bt_sock:
+        if self.tcp_target:
+            try:
+                s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+                s.settimeout(5)
+                s.connect((self.tcp_target, 56789))
+                s.send(encrypt_msg(text))
+                s.close()
+            except Exception as e:
+                self.status_lbl.config(text=f"Error TCP: {e}")
+        elif self.bt_sock:
             try:
                 self.bt_sock.send(encrypt_msg(text))
             except:
@@ -496,6 +532,8 @@ class DesktopClient:
             try: self.bt_sock.close()
             except: pass
             self.bt_sock = None
+        if self.use_tcp:
+            self.tcp_target = ""
         self.build_login_screen()
 
 if __name__ == "__main__":
