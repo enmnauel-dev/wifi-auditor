@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
+import java.util.Calendar
 
 class MainActivity : ComponentActivity() {
 
@@ -1078,23 +1080,43 @@ fun MensajesScreen(
                     LazyColumn(state = chatListState, modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp)) {
                         items(count = chatMessages.size, key = { it }) { pos ->
                             val msg = chatMessages[pos]
+                            val prev = if (pos > 0) chatMessages[pos - 1] else null
+                            val isSystem = msg.text.startsWith("---")
                             val isMe = msg.fromMe
-                            val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
-                            val timeStr = remember(msg.timestamp) {
-                                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
+                            val consecutive = prev != null && prev.fromMe == isMe && prev.fromName == msg.fromName && !isSystem && !prev.text.startsWith("---")
+                            if (prev == null || !isSameDay(prev.timestamp, msg.timestamp)) {
+                                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF182229)) {
+                                        Text(getDateLabel(msg.timestamp), color = Color(0xFF8696A0), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp))
+                                    }
+                                }
                             }
-                            Box(modifier = Modifier.fillMaxWidth().padding(top = 1.dp, bottom = 1.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
-                                Box(modifier = Modifier.widthIn(max = 290.dp).background(bg, shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                                    16.dp, 16.dp, if (isMe) 16.dp else 4.dp, if (isMe) 4.dp else 16.dp
-                                )).padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
-                                    Column {
-                                        Text(msg.text, color = Color.White, fontSize = 15.sp)
-                                        Spacer(Modifier.height(2.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.End)) {
-                                            Text(timeStr, color = Color(0xFF8696A0), fontSize = 11.sp)
-                                            if (isMe) {
-                                                Spacer(Modifier.width(3.dp))
-                                                Icon(Icons.Filled.Check, null, modifier = Modifier.size(14.dp), tint = Color(0xFF8696A0))
+                            if (isSystem) {
+                                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    Text(msg.text.replace("---", "").trim(), color = Color(0xFF8696A0), fontSize = 12.sp, fontStyle = FontStyle.Italic)
+                                }
+                            } else {
+                                val bg = if (isMe) Color(0xFF005C4B) else Color(0xFF202C33)
+                                val timeStr = remember(msg.timestamp) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp)) }
+                                val topPad = if (consecutive) 1.dp else 3.dp
+                                val tailTL = if (isMe || !consecutive) 16.dp else 4.dp
+                                val tailBR = if (isMe) 4.dp else 16.dp
+                                Box(Modifier.fillMaxWidth().padding(top = topPad, bottom = 1.dp), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Column(horizontalAlignment = if (isMe) Alignment.End else Alignment.Start) {
+                                        if (!isMe && msg.fromName.isNotEmpty() && !consecutive) {
+                                            Text(msg.fromName, color = Color(0xFF00A884), fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 4.dp, bottom = 2.dp))
+                                        }
+                                        Box(Modifier.widthIn(max = 290.dp).background(bg, shape = RoundedCornerShape(16.dp, 16.dp, tailTL, tailBR)).padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+                                            Column {
+                                                Text(msg.text, color = Color.White, fontSize = 15.sp)
+                                                Spacer(Modifier.height(2.dp))
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.End)) {
+                                                    Text(timeStr, color = Color(0xFF8696A0), fontSize = 11.sp)
+                                                    if (isMe) {
+                                                        Spacer(Modifier.width(3.dp))
+                                                        Icon(if (msg.status == "delivered" || msg.status == "read") Icons.Filled.Done else Icons.Filled.Check, null, modifier = Modifier.size(14.dp), tint = if (msg.status == "read") Color(0xFF53BDEB) else Color(0xFF8696A0))
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1303,4 +1325,20 @@ fun PrivacyConsentDialog(onAccept: () -> Unit) {
         },
         dismissButton = {}
     )
+}
+
+private fun isSameDay(t1: Long, t2: Long): Boolean {
+    val c1 = Calendar.getInstance().apply { timeInMillis = t1 }
+    val c2 = Calendar.getInstance().apply { timeInMillis = t2 }
+    return c1.get(Calendar.YEAR) == c2.get(Calendar.YEAR) && c1.get(Calendar.DAY_OF_YEAR) == c2.get(Calendar.DAY_OF_YEAR)
+}
+
+private fun getDateLabel(timestamp: Long): String {
+    val now = Calendar.getInstance()
+    val msg = Calendar.getInstance().apply { timeInMillis = timestamp }
+    return when {
+        now.get(Calendar.YEAR) == msg.get(Calendar.YEAR) && now.get(Calendar.DAY_OF_YEAR) == msg.get(Calendar.DAY_OF_YEAR) -> "Hoy"
+        now.get(Calendar.YEAR) == msg.get(Calendar.YEAR) && now.get(Calendar.DAY_OF_YEAR) - msg.get(Calendar.DAY_OF_YEAR) == 1 -> "Ayer"
+        else -> SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(timestamp))
+    }
 }

@@ -79,7 +79,9 @@ data class SettingsState(
 data class ChatMessage(
     val text: String,
     val fromMe: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val fromName: String = "",
+    val status: String = "sent"
 )
 
 class WiFiViewModel(application: Application) : AndroidViewModel(application) {
@@ -730,8 +732,8 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {}
     }
 
-    private fun addIncomingMessage(text: String) {
-        _chatMessages.value = _chatMessages.value + ChatMessage(text, false)
+    private fun addIncomingMessage(text: String, fromName: String = "") {
+        _chatMessages.value = _chatMessages.value + ChatMessage(text, false, fromName = fromName)
         vibrate()
     }
 
@@ -1092,7 +1094,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendViaBt(deviceAddress: String, text: String) {
         if (text.isBlank()) return
-        val msg = ChatMessage(text, true)
+        val msg = ChatMessage(text, true, status = "sending")
         _chatMessages.value = _chatMessages.value + msg
         _status.value = "BT: enviando..."
         viewModelScope.launch(Dispatchers.IO) {
@@ -1102,6 +1104,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         btOut.write(encryptMsg(text))
                         btOut.flush()
+                        setLastSentStatus("sent")
                         _status.value = "BT: mensaje enviado"
                         return@launch
                     } catch (_: Exception) {
@@ -1109,7 +1112,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 val device = btAdapter?.getRemoteDevice(deviceAddress)
-                if (device == null) { _status.value = "BT: dispositivo no encontrado"; return@launch }
+                if (device == null) { setLastSentStatus("failed"); _status.value = "BT: dispositivo no encontrado"; return@launch }
                 var socket: BluetoothSocket? = null
                 try {
                     val m = device.javaClass.getMethod("createInsecureRfcommSocket", Integer.TYPE)
@@ -1126,15 +1129,20 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                     socket.outputStream.write(encryptMsg(text))
                     socket.outputStream.flush()
                     launch(Dispatchers.IO) { btReadLoop(socket) }
+                    setLastSentStatus("sent")
                     _status.value = "BT: mensaje enviado"
                 } else {
+                    setLastSentStatus("failed")
                     _status.value = "BT: no se pudo conectar"
                 }
             } catch (e: SecurityException) {
+                setLastSentStatus("failed")
                 _status.value = "BT: permiso denegado"
             } catch (e: java.io.IOException) {
+                setLastSentStatus("failed")
                 _status.value = "BT: error IO: ${e.message}"
             } catch (e: Exception) {
+                setLastSentStatus("failed")
                 _status.value = "BT: error: ${e.message}"
             }
         }
@@ -1235,7 +1243,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                             val t = json.optString("text", "")
                             val from = json.optString("from", "Invitado")
                             if (t.isNotEmpty()) {
-                                addIncomingMessage("$from: $t")
+                                addIncomingMessage(t, fromName = from)
                             }
                         }
                         "user_joined" -> {
@@ -1290,14 +1298,26 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         // Not needed
     }
 
+    private fun setLastSentStatus(status: String) {
+        val list = _chatMessages.value.toMutableList()
+        for (i in list.indices.reversed()) {
+            if (list[i].fromMe && list[i].status != "delivered" && list[i].status != "read") {
+                list[i] = list[i].copy(status = status)
+                break
+            }
+        }
+        _chatMessages.value = list
+    }
+
     fun sendChatMessage(ip: String, text: String) {
         if (text.isBlank()) return
-        val msg = ChatMessage(text, true)
+        val msg = ChatMessage(text, true, status = "sending")
         _chatMessages.value = _chatMessages.value + msg
         if (_chatRelayConnected.value && relayWs != null) {
             val savedName = context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "Android") ?: "Android"
             val json = """{"type":"message","from":"${savedName.replace("\"","\\\"")}","text":"${text.replace("\"","\\\"")}"}"""
             relayWs?.send(json)
+            setLastSentStatus("sent")
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -1306,6 +1326,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     btSocket.outputStream.write(encryptMsg(text))
                     btSocket.outputStream.flush()
+                    setLastSentStatus("sent")
                     _status.value = "BT: mensaje enviado"
                     return@launch
                 } catch (e: Exception) {
@@ -1326,8 +1347,10 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                 socket.outputStream.write(encryptMsg(text))
                 socket.outputStream.flush()
                 socket.close()
+                setLastSentStatus("sent")
                 _status.value = "Chat: mensaje enviado"
             } catch (_: Exception) {
+                setLastSentStatus("failed")
                 val btDevice = _btDeviceList.value.firstOrNull { it.second == ip }?.second
                 if (btDevice != null && btAdapter?.isEnabled == true) {
                     _status.value = "Reintentando Bluetooth..."
