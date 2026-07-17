@@ -444,9 +444,13 @@ class DesktopClient:
         bg_color = "#0B141A"
         self.chat_frame = tk.Frame(self.root, bg=bg_color)
         self.chat_frame.pack(fill="both", expand=True)
+        scroll = tk.Scrollbar(self.chat_frame, bg="#1f2c33", troughcolor="#0B141A")
+        scroll.pack(side="right", fill="y")
         self.chat_display = tk.Text(self.chat_frame, bg="#0B141A", fg="white", font=("Arial", 11), wrap="word",
-                                      state="disabled", relief="flat", borderwidth=0, padx=10, pady=5)
+                                      state="disabled", relief="flat", borderwidth=0, padx=10, pady=5,
+                                      yscrollcommand=scroll.set)
         self.chat_display.pack(fill="both", expand=True)
+        scroll.config(command=self.chat_display.yview)
         self.chat_display.tag_config("me", justify="right", foreground="#90CAF9",
                                        font=("Arial", 11), spacing1=4, spacing2=4, spacing3=4, lmargin1=80)
         self.chat_display.tag_config("other", justify="left", foreground="#A5D6A7",
