@@ -1296,6 +1296,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                             val from = json.optString("from_id", "")
                             val fromName = json.optString("from_name", "Invitado")
                             val payload = json.optJSONObject("payload")
+                            addIncomingMessage("--- OFERTA de $fromName ($from) ---")
                             if (payload != null && _callState.value == CallState.Idle) {
                                 _callerId.value = from
                                 _callerName.value = fromName
@@ -1306,6 +1307,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                     handleCallOffer(sdp, type)
                                 }
                             } else if (payload != null) {
+                                addIncomingMessage("--- Ocupado, rechazando... ---")
                                 relayWs?.send("""{"type":"call-busy","to":"$from","payload":{}}""")
                             }
                         }
@@ -1568,14 +1570,17 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                 put("to", targetId)
                                 put("payload", payloadObj)
                             }
-                            relayWs?.send(msgObj.toString())
+                            val jsonStr = msgObj.toString()
+                            val sent = relayWs?.send(jsonStr)
+                            addIncomingMessage("--- Enviando oferta a $targetName (${if (sent == true) "OK" else "FALLO"}) ---")
+                            _status.value = "Oferta enviada: ${jsonStr.take(100)}..."
                         }
-                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; hangup() }
+                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; addIncomingMessage("--- Error SDP local: $msg ---"); hangup() }
                         override fun onCreateSuccess(d: SessionDescription) {}
                         override fun onCreateFailure(m: String?) {}
                     }, desc)
                 }
-                override fun onCreateFailure(msg: String?) { _status.value = "createOffer: $msg"; hangup() }
+                override fun onCreateFailure(msg: String?) { _status.value = "createOffer: $msg"; addIncomingMessage("--- Error createOffer: $msg ---"); hangup() }
                 override fun onSetSuccess() {}
                 override fun onSetFailure(msg: String?) {}
             }, constraints)
