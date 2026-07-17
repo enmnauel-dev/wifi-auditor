@@ -78,18 +78,21 @@ wss.on('connection', ws => {
   sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
   broadcastGuestList();
   const guestCount = guests.size;
+  console.log(`Guest connected: ${guestId} (total: ${guestCount}) - ${defaultName}`);
   if (guestCount >= 2) {
-    // Notify all about new user
-    for (const [sock] of guests) {
-      if (sock.readyState === WebSocket.OPEN) {
+    console.log(`  -> sending paired to new guest ${guestId}`);
+    sendJSON(ws, { type: 'paired' });
+    for (const [sock, info] of guests) {
+      if (sock !== ws && sock.readyState === WebSocket.OPEN) {
+        console.log(`  -> sending paired + user_joined to ${info.id}`);
         sendJSON(sock, { type: 'paired' });
         sendJSON(sock, { type: 'user_joined', id: guestId, name: defaultName, count: guestCount });
       }
     }
   } else {
+    console.log(`  -> sending waiting to ${guestId}`);
     sendJSON(ws, { type: 'waiting' });
   }
-  console.log(`Guest connected: ${guestId} (total: ${guestCount})`);
 
   ws.on('message', data => {
     try {
