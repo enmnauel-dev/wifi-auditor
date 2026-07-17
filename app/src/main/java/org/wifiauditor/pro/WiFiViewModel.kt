@@ -1323,12 +1323,16 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         "ice-candidate" -> {
                             val payload = json.optJSONObject("payload")
-                            if (payload != null && _callState.value == CallState.Connected && peerConnection != null) {
+                            if (payload != null) {
                                 val candidate = payload.optString("candidate", "")
                                 val sdpMid = payload.optString("sdpMid", "")
                                 val sdpMLineIndex = payload.optInt("sdpMLineIndex", 0)
                                 if (candidate.isNotEmpty()) {
-                                    peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                    if (peerConnection != null) {
+                                        peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                    } else {
+                                        pendingCandidates.add(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                    }
                                 }
                             }
                         }
@@ -1459,6 +1463,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteAudioTrack: AudioTrack? = null
     private val webrtcExecutor = Executors.newSingleThreadExecutor()
     private var pendingOfferSdp: String? = null
+    private val pendingCandidates = mutableListOf<IceCandidate>()
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
@@ -1598,6 +1603,8 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             val offerDesc = SessionDescription(SessionDescription.Type.OFFER, offerSdp)
             peerConnection?.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
+                    pendingCandidates.forEach { peerConnection?.addIceCandidate(it) }
+                    pendingCandidates.clear()
                     val constraints = MediaConstraints().apply {
                         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                     }
@@ -1649,6 +1656,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         _callerId.value = ""
         _callerName.value = ""
         pendingOfferSdp = null
+        pendingCandidates.clear()
         peerConnection?.close()
         peerConnection = null
         localAudioTrack = null
