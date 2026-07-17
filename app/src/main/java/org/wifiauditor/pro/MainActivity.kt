@@ -162,6 +162,9 @@ fun WiFiAuditorApp(vm: WiFiViewModel = viewModel()) {
     val settings by vm.settings.collectAsState()
     val traceroute by vm.traceroute.collectAsState()
 
+    val callState by vm.callState.collectAsState()
+    val callerName by vm.callerName.collectAsState()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -207,6 +210,35 @@ fun WiFiAuditorApp(vm: WiFiViewModel = viewModel()) {
                 4 -> MensajesScreen(context, vm)
             }
         }
+    }
+    // Incoming call dialog (visible from any tab)
+    if (callState.name == "Ringing") {
+        AlertDialog(
+            onDismissRequest = { vm.rejectCall() },
+            title = { Text("Llamada entrante", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.PhoneInTalk, null, Modifier.size(48.dp), tint = Color(0xFF4CAF50))
+                    Spacer(Modifier.height(8.dp))
+                    Text(callerName.ifEmpty { "Invitado" }, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text("te esta llamando...", fontSize = 14.sp, color = Color(0xFF8696A0))
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.answerCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) {
+                    Icon(Icons.Filled.Phone, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Responder")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { vm.rejectCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))) {
+                    Icon(Icons.Filled.CallEnd, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Rechazar")
+                }
+            }
+        )
     }
 }
 
@@ -1193,35 +1225,6 @@ fun MensajesScreen(
         } // fin chat section Column
     } // fin outer Column
     } // fin Scaffold
-    // Incoming call dialog
-    if (callState.name == "Ringing") {
-        AlertDialog(
-            onDismissRequest = { vm.rejectCall() },
-            title = { Text("Llamada entrante", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.PhoneInTalk, null, Modifier.size(48.dp), tint = Color(0xFF4CAF50))
-                    Spacer(Modifier.height(8.dp))
-                    Text(callerName.ifEmpty { "Invitado" }, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                    Text("te esta llamando...", fontSize = 14.sp, color = Color(0xFF8696A0))
-                }
-            },
-            confirmButton = {
-                Button(onClick = { vm.answerCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))) {
-                    Icon(Icons.Filled.Phone, null, Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Responder")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { vm.rejectCall() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))) {
-                    Icon(Icons.Filled.CallEnd, null, Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Rechazar")
-                }
-            }
-        )
-    }
 }
 
 @Composable
