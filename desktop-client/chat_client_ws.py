@@ -97,6 +97,7 @@ class DesktopClient:
         self.use_tcp = False
         self.bt_target = ""
         self.tcp_target = ""
+        self.tcp_server_sock = None
         self.build_login_screen()
 
     def clear(self):
@@ -300,6 +301,7 @@ class DesktopClient:
             save_config(tcp_ip=ip)
             self.running = True
             self.root.after(0, self.build_main_screen)
+            threading.Thread(target=self.tcp_server_loop, daemon=True).start()
             return
         if self.use_bt:
             self.connect_bt()
@@ -400,6 +402,10 @@ class DesktopClient:
             try: self.bt_sock.close()
             except: pass
             self.bt_sock = None
+        if self.tcp_server_sock:
+            try: self.tcp_server_sock.close()
+            except: pass
+            self.tcp_server_sock = None
         self.build_login_screen()
 
     def handle_message(self, msg):
@@ -524,6 +530,34 @@ class DesktopClient:
         elif self.ws:
             self.send_raw({"type": "message", "from": self.my_nick, "text": text})
 
+    def tcp_server_loop(self):
+        try:
+            s = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+            s.setsockopt(sock.SOL_SOCKET, sock.SO_REUSEADDR, 1)
+            s.bind(('0.0.0.0', 56789))
+            s.listen(1)
+            s.settimeout(1)
+            self.tcp_server_sock = s
+            while self.running:
+                try:
+                    conn, addr = s.accept()
+                    data = conn.recv(4096)
+                    if data:
+                        text = decrypt_msg(data)
+                        if text:
+                            self.root.after(0, lambda t=text: self.display_message("Otro", t, 0))
+                    conn.close()
+                except sock.timeout:
+                    continue
+                except: break
+        except Exception as e:
+            self.root.after(0, lambda: self.status_lbl.config(text=f"Error servidor TCP: {e}"))
+        finally:
+            if self.tcp_server_sock:
+                try: self.tcp_server_sock.close()
+                except: pass
+                self.tcp_server_sock = None
+
     def disconnect(self):
         self.running = False
         if self.ws:
@@ -534,6 +568,10 @@ class DesktopClient:
             try: self.bt_sock.close()
             except: pass
             self.bt_sock = None
+        if self.tcp_server_sock:
+            try: self.tcp_server_sock.close()
+            except: pass
+            self.tcp_server_sock = None
         if self.use_tcp:
             self.tcp_target = ""
         self.build_login_screen()
