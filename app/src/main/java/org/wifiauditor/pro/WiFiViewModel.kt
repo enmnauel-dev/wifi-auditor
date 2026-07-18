@@ -36,6 +36,8 @@ import java.util.concurrent.TimeUnit
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import java.net.ServerSocket
 import java.net.Socket
 import android.os.VibrationEffect
@@ -102,6 +104,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             }
             notificationManager.createNotificationChannel(channel)
         }
+        Handler(Looper.getMainLooper()).post { initWebRTC() }
     }
 
     private val _history = MutableStateFlow<List<ScanEntity>>(emptyList())
@@ -1472,11 +1475,10 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun initWebRTC() {
         if (pcFactory != null) return
-        PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+        PeerConnectionFactory.InitializationOptions.builder(getApplication())
             .createInitializationOptions()
             .also { PeerConnectionFactory.initialize(it) }
         pcFactory = PeerConnectionFactory.builder()
-            .setOptions(PeerConnectionFactory.Options())
             .createPeerConnectionFactory()
     }
 
