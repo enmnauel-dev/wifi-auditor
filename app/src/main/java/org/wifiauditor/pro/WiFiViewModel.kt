@@ -1495,6 +1495,9 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         config.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         config.keyType = PeerConnection.KeyType.ECDSA
+        config.tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+        config.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+        config.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         val observer = object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
                 val cid = _callerId.value
@@ -1534,7 +1537,8 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             override fun onRenegotiationNeeded() {}
             override fun onDataChannel(channel: DataChannel?) {}
         }
-        peerConnection = pcFactory?.createPeerConnection(config, observer)
+        val deps = PeerConnectionDependencies.builder(observer).createPeerConnectionDependencies()
+        peerConnection = pcFactory?.createPeerConnection(config, deps)
         if (peerConnection == null) {
             addIncomingMessage("--- Error: createPeerConnection devolvio null (factory=${pcFactory != null}) ---")
         }
