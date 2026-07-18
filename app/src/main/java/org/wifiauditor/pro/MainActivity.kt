@@ -925,7 +925,13 @@ fun MensajesScreen(
         return String.format("%02d:%02d", m, s)
     }
 
-    LaunchedEffect(Unit) { vm.initBluetooth(context) }
+    LaunchedEffect(Unit) {
+        vm.initBluetooth(context)
+        val rHost = prefs?.getString("relay_url", "wifi-auditor.onrender.com") ?: "wifi-auditor.onrender.com"
+        val rPort = prefs?.getString("relay_port", "443")?.toIntOrNull() ?: 443
+        val gName = prefs?.getString("guest_name", "Telefono") ?: "Telefono"
+        vm.connectRelay(rHost, rPort, gName)
+    }
 
     LaunchedEffect(chatMessages.size) {
         if (chatMessages.isNotEmpty()) {
