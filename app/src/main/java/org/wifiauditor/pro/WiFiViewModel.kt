@@ -1477,7 +1477,11 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             .createInitializationOptions()
             .also { PeerConnectionFactory.initialize(it) }
         try {
+            val swEncoderFactory = SoftwareVideoEncoderFactory()
+            val swDecoderFactory = SoftwareVideoDecoderFactory()
             pcFactory = PeerConnectionFactory.builder()
+                .setVideoDecoderFactory(swDecoderFactory)
+                .setVideoEncoderFactory(swEncoderFactory)
                 .createPeerConnectionFactory()
         } catch (e: Exception) {
             addIncomingMessage("--- Error factory: ${e.message} ---")
