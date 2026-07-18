@@ -1335,7 +1335,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                 startRingtone()
                                 val sdp = payload.optString("sdp", "")
                                 val type = payload.optString("type", "offer")
-                                viewModelScope.launch(Dispatchers.IO) {
+                                webrtcExecutor.execute {
                                     handleCallOffer(sdp, type)
                                 }
                             } else if (payload != null) {
@@ -1348,7 +1348,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                             if (payload != null) {
                                 val sdp = payload.optString("sdp", "")
                                 val type = payload.optString("type", "answer")
-                                viewModelScope.launch(Dispatchers.IO) {
+                                webrtcExecutor.execute {
                                     handleCallAnswer(sdp, type)
                                 }
                             }
@@ -1360,10 +1360,13 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                 val sdpMid = payload.optString("sdpMid", "")
                                 val sdpMLineIndex = payload.optInt("sdpMLineIndex", 0)
                                 if (candidate.isNotEmpty()) {
-                                    if (peerConnection != null) {
-                                        peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
-                                    } else {
-                                        pendingCandidates.add(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                    webrtcExecutor.execute {
+                                        val pc = peerConnection
+                                        if (pc != null) {
+                                            pc.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                        } else {
+                                            pendingCandidates.add(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+                                        }
                                     }
                                 }
                             }
