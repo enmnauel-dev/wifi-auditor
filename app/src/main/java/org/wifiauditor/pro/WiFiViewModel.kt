@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.PowerManager
 import java.net.ServerSocket
 import java.net.Socket
 import android.os.VibrationEffect
@@ -1211,6 +1212,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private val okHttp = OkHttpClient.Builder().readTimeout(0, java.util.concurrent.TimeUnit.SECONDS).build()
     private val _myGuestId = MutableStateFlow("")
     private val _guestList = MutableStateFlow<List<GuestInfo>>(emptyList())
+    private var wakeLock: PowerManager.WakeLock? = null
 
     fun connectRelay(host: String, port: Int, guestName: String = "") {
         disconnectRelay()
@@ -1299,6 +1301,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                             val payload = json.optJSONObject("payload")
                             addIncomingMessage("--- OFERTA de $fromName ($from) ---")
                             if (payload != null && _callState.value == CallState.Idle) {
+                                acquireWakeLock()
                                 _callerId.value = from
                                 _callerName.value = fromName
                                 _callState.value = CallState.Ringing
@@ -1466,7 +1469,9 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingOfferSdp: String? = null
     private val pendingCandidates = mutableListOf<IceCandidate>()
 
-    private val iceServers = emptyList<PeerConnection.IceServer>()
+    private val iceServers = listOf(
+        PeerConnection.IceServer("stun:openrelay.metered.ca:80")
+    )
 
     private fun initWebRTC() {
         if (pcFactory != null) return
@@ -1562,8 +1567,24 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         }, desc)
     }
 
+    private fun acquireWakeLock() {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wifi_auditor:call")
+            wakeLock?.acquire(10*60*1000L) // 10 min max
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
+    }
+
     fun startCall(targetId: String, targetName: String) {
         if (_callState.value != CallState.Idle) return
+        acquireWakeLock()
         _callState.value = CallState.Calling
         _callerName.value = targetName
         _callerId.value = targetId
@@ -1621,6 +1642,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun answerCall() {
         if (_callState.value != CallState.Ringing) return
+        acquireWakeLock()
         _callState.value = CallState.Calling
         webrtcExecutor.execute {
             createPeerConnection()
@@ -1675,6 +1697,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun hangup() {
+        releaseWakeLock()
         _callState.value = CallState.Idle
         val cid = _callerId.value
         if (cid.isNotEmpty() && relayWs != null) {
