@@ -1491,13 +1491,6 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             addIncomingMessage("--- Error: pcFactory es null ---")
             return null
         }
-        val config = PeerConnection.RTCConfiguration(iceServers)
-        config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-        config.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-        config.keyType = PeerConnection.KeyType.ECDSA
-        config.tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
-        config.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
-        config.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         val observer = object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
                 val cid = _callerId.value
@@ -1537,8 +1530,12 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             override fun onRenegotiationNeeded() {}
             override fun onDataChannel(channel: DataChannel?) {}
         }
-        val deps = PeerConnectionDependencies.builder(observer).createPeerConnectionDependencies()
-        peerConnection = pcFactory?.createPeerConnection(config, deps)
+        try {
+            peerConnection = pcFactory?.createPeerConnection(iceServers, observer)
+        } catch (e: Exception) {
+            addIncomingMessage("--- Error createPC: ${e.message} ---")
+            peerConnection = null
+        }
         if (peerConnection == null) {
             addIncomingMessage("--- Error: createPeerConnection devolvio null (factory=${pcFactory != null}) ---")
         }
