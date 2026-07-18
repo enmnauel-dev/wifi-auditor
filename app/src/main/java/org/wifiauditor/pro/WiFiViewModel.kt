@@ -7,7 +7,12 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.ToneGenerator
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +26,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import okhttp3.*
@@ -1209,20 +1215,41 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatRelayConnected = MutableStateFlow(false)
     val chatRelayConnected: StateFlow<Boolean> = _chatRelayConnected.asStateFlow()
     private var relayWs: WebSocket? = null
-    private val okHttp = OkHttpClient.Builder().readTimeout(0, java.util.concurrent.TimeUnit.SECONDS).build()
+    private var relayHost: String = ""
+    private var relayPort: Int = 443
+    private var relayGuestName: String = ""
+    private var relayResolvedIp: String = ""
+    private val okHttp = OkHttpClient.Builder()
+        .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+        .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val _myGuestId = MutableStateFlow("")
     private val _guestList = MutableStateFlow<List<GuestInfo>>(emptyList())
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
-    fun connectRelay(host: String, port: Int, guestName: String = "") {
+    fun connectRelay(host: String, port: Int, guestName: String = "", reconnectId: String = "") {
         disconnectRelay()
+        relayHost = host
+        relayPort = port
+        relayGuestName = guestName
         _status.value = "Conectando..."
         val cleanHost = host.trim().removePrefix("https://").removePrefix("http://").removePrefix("wss://").removePrefix("ws://").split("/").first().split(":").first()
         val protocol = if (port == 443) "wss" else "ws"
-        val url = "$protocol://$cleanHost:$port"
+        val useIp = relayResolvedIp.isNotEmpty()
+        val connectHost = if (useIp) relayResolvedIp else cleanHost
+        var url = "$protocol://$connectHost:$port"
+        if (reconnectId.isNotEmpty()) url += "?reconnect=$reconnectId"
+        val reqBuilder = okhttp3.Request.Builder().url(url)
+        if (useIp) reqBuilder.header("Host", cleanHost)
+        val request = reqBuilder.build()
+        try {
+            if (!useIp) {
+                relayResolvedIp = java.net.InetAddress.getByName(cleanHost).hostAddress ?: ""
+            }
+        } catch (_: Exception) {}
         val nameToSend = if (guestName.isNotBlank()) guestName
             else context.getSharedPreferences("wifichat", Context.MODE_PRIVATE).getString("guest_name", "") ?: ""
-        val request = okhttp3.Request.Builder().url(url).build()
         relayWs = okHttp.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: okhttp3.Response) {
                 _chatRelayConnected.value = true
@@ -1305,6 +1332,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                                 _callerId.value = from
                                 _callerName.value = fromName
                                 _callState.value = CallState.Ringing
+                                startRingtone()
                                 val sdp = payload.optString("sdp", "")
                                 val type = payload.optString("type", "offer")
                                 viewModelScope.launch(Dispatchers.IO) {
@@ -1354,11 +1382,30 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             override fun onFailure(ws: WebSocket, t: Throwable, response: okhttp3.Response?) {
                 _chatRelayConnected.value = false
                 _status.value = "Error relay: ${t.message ?: "desconocido"}"
+                if (_callState.value != CallState.Idle && relayHost.isNotBlank()) {
+                    viewModelScope.launch {
+                        var attempt = 0
+                        while (isActive && _callState.value != CallState.Idle) {
+                            attempt++
+                            delay(1000L * attempt)
+                            try {
+                                connectRelay(relayHost, relayPort, relayGuestName, _myGuestId.value)
+                                if (_chatRelayConnected.value) break
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 _chatRelayConnected.value = false
                 _status.value = "Relay desconectado"
+                if (_callState.value != CallState.Idle && relayHost.isNotBlank()) {
+                    viewModelScope.launch {
+                        delay(1000)
+                        connectRelay(relayHost, relayPort, relayGuestName)
+                    }
+                }
             }
         })
     }
@@ -1366,6 +1413,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectRelay() {
         relayWs?.close(1000, "Usuario desconecto")
         relayWs = null
+        relayResolvedIp = ""
         _chatRelayConnected.value = false
         _status.value = "Relay desconectado"
     }
@@ -1457,6 +1505,14 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _callerId = MutableStateFlow("")
 
+    private val _callDuration = MutableStateFlow(0L)
+    val callDuration: StateFlow<Long> = _callDuration.asStateFlow()
+    private var callTimerJob: kotlinx.coroutines.Job? = null
+    private var audioKeepAliveJob: kotlinx.coroutines.Job? = null
+
+    private val _speakerOn = MutableStateFlow(false)
+    val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
+
     val myGuestId: StateFlow<String> = _myGuestId.asStateFlow()
     val guestList: StateFlow<List<GuestInfo>> = _guestList.asStateFlow()
 
@@ -1472,6 +1528,84 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private val iceServers = listOf(
         PeerConnection.IceServer("stun:openrelay.metered.ca:80")
     )
+
+    private var ringtonePlayer: MediaPlayer? = null
+    private var ringbackJob: kotlinx.coroutines.Job? = null
+
+    private fun startRingtone() {
+        stopRingtone()
+        try {
+            val ctx = getApplication<Application>()
+            val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+            ringtonePlayer = MediaPlayer().apply {
+                setAudioStreamType(AudioManager.STREAM_RING)
+                setDataSource(ctx, uri)
+                isLooping = true
+                prepare()
+                start()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun stopRingtone() {
+        try { ringtonePlayer?.stop() } catch (_: Exception) {}
+        try { ringtonePlayer?.release() } catch (_: Exception) {}
+        ringtonePlayer = null
+    }
+
+    private fun startRingback() {
+        ringbackJob?.cancel()
+        ringbackJob = viewModelScope.launch(Dispatchers.IO) {
+            val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+            try {
+                while (isActive) {
+                    tg.startTone(ToneGenerator.TONE_SUP_RINGTONE, 2000)
+                    delay(3000)
+                }
+            } finally {
+                tg.release()
+            }
+        }
+    }
+
+    private fun stopRingback() {
+        ringbackJob?.cancel()
+        ringbackJob = null
+    }
+
+    private fun stopAllSounds() {
+        stopRingtone()
+        stopRingback()
+    }
+
+    private fun playBeepTone(toneType: Int, durationMs: Int = 300) {
+        try {
+            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
+            tg.startTone(toneType, durationMs)
+            tg.release()
+        } catch (_: Exception) {}
+    }
+
+    private fun startAudioKeepAlive() {
+        audioKeepAliveJob?.cancel()
+        audioKeepAliveJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(15000)
+                try {
+                    val ctx = getApplication<Application>()
+                    val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                        am.mode = AudioManager.MODE_IN_COMMUNICATION
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun stopAudioKeepAlive() {
+        audioKeepAliveJob?.cancel()
+        audioKeepAliveJob = null
+    }
 
     private fun initWebRTC() {
         if (pcFactory != null) return
@@ -1520,6 +1654,9 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
                     viewModelScope.launch { hangup() }
                 } else if (state == PeerConnection.IceConnectionState.CONNECTED) {
                     _callState.value = CallState.Connected
+                    stopRingback()
+                    initCallAudio()
+                    startCallTimer()
                 }
             }
             override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
@@ -1545,7 +1682,10 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun addLocalAudio() {
         val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("echoCancellation", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
         }
         localAudioSource = pcFactory?.createAudioSource(constraints)
         localAudioTrack = pcFactory?.createAudioTrack("audio_0", localAudioSource)
@@ -1568,26 +1708,99 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun acquireWakeLock() {
+        try { startForegroundService() } catch (_: Exception) {}
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wifi_auditor:call")
-            wakeLock?.acquire(10*60*1000L) // 10 min max
+            wakeLock?.acquire(10*60*1000L)
+        } catch (_: Exception) {}
+        try {
+            val wm = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "wifi_auditor:call")
+            wifiLock?.acquire()
         } catch (_: Exception) {}
     }
 
     private fun releaseWakeLock() {
+        try { stopForegroundService() } catch (_: Exception) {}
+        try {
+            wifiLock?.release()
+        } catch (_: Exception) {}
+        wifiLock = null
         try {
             wakeLock?.release()
         } catch (_: Exception) {}
         wakeLock = null
     }
 
+    private fun startForegroundService() {
+        try {
+            val intent = Intent(context, CallService::class.java).apply {
+                putExtra("caller_name", if (_callerName.value.isNotEmpty()) _callerName.value else "Llamada activa")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun stopForegroundService() {
+        try {
+            val intent = Intent(context, CallService::class.java)
+            context.stopService(intent)
+        } catch (_: Exception) {}
+    }
+
+    private fun initCallAudio() {
+        try {
+            val ctx = getApplication<Application>()
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            am.isSpeakerphoneOn = false
+            am.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN)
+        } catch (_: Exception) {}
+    }
+
+    fun forceSpeakerOff() {
+        try {
+            val ctx = getApplication<Application>()
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.isSpeakerphoneOn = false
+        } catch (_: Exception) {}
+        _speakerOn.value = false
+    }
+    private fun resetCallAudio() {
+        try {
+            val ctx = getApplication<Application>()
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.abandonAudioFocus(null)
+            am.mode = AudioManager.MODE_NORMAL
+            am.isSpeakerphoneOn = false
+        } catch (_: Exception) {}
+        _speakerOn.value = false
+    }
+
+    fun toggleSpeaker() {
+        try {
+            val ctx = getApplication<Application>()
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val on = !am.isSpeakerphoneOn
+            am.isSpeakerphoneOn = on
+            _speakerOn.value = on
+        } catch (_: Exception) {}
+    }
+
     fun startCall(targetId: String, targetName: String) {
         if (_callState.value != CallState.Idle) return
         acquireWakeLock()
+        initCallAudio()
         _callState.value = CallState.Calling
         _callerName.value = targetName
         _callerId.value = targetId
+        startRingback()
+        startAudioKeepAlive()
         webrtcExecutor.execute {
             try {
                 createPeerConnection()
@@ -1643,7 +1856,11 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     fun answerCall() {
         if (_callState.value != CallState.Ringing) return
         acquireWakeLock()
+        initCallAudio()
         _callState.value = CallState.Calling
+        stopAllSounds()
+        playBeepTone(ToneGenerator.TONE_PROP_ACK)
+        startAudioKeepAlive()
         webrtcExecutor.execute {
             createPeerConnection()
             addLocalAudio()
@@ -1689,6 +1906,23 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun startCallTimer() {
+        callTimerJob?.cancel()
+        _callDuration.value = 0L
+        callTimerJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1000)
+                _callDuration.value += 1
+            }
+        }
+    }
+
+    private fun stopCallTimer() {
+        callTimerJob?.cancel()
+        callTimerJob = null
+        _callDuration.value = 0L
+    }
+
     fun rejectCall() {
         if (_callState.value != CallState.Ringing) return
         relayWs?.send("""{"type":"call-busy","to":"${_callerId.value}","payload":{}}""")
@@ -1698,6 +1932,11 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun hangup() {
         releaseWakeLock()
+        resetCallAudio()
+        stopAllSounds()
+        playBeepTone(ToneGenerator.TONE_PROP_NACK)
+        stopAudioKeepAlive()
+        stopCallTimer()
         _callState.value = CallState.Idle
         val cid = _callerId.value
         if (cid.isNotEmpty() && relayWs != null) {

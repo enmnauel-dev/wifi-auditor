@@ -916,6 +916,14 @@ fun MensajesScreen(
     val myGuestId by vm.myGuestId.collectAsState()
     val guestList by vm.guestList.collectAsState()
     val btConnected by vm.btConnected.collectAsState()
+    val speakerOn by vm.speakerOn.collectAsState()
+    val callDuration by vm.callDuration.collectAsState()
+
+    fun formatDuration(seconds: Long): String {
+        val m = seconds / 60
+        val s = seconds % 60
+        return String.format("%02d:%02d", m, s)
+    }
 
     LaunchedEffect(Unit) { vm.initBluetooth(context) }
 
@@ -1139,8 +1147,20 @@ fun MensajesScreen(
                         Icon(Icons.Filled.PhoneInTalk, null, Modifier.size(18.dp), tint = Color.White)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Llamada ${if (callState.name == "Calling") "llamando..." else "activa"}", color = Color.White, fontSize = 13.sp)
+                            Text(
+                                when (callState.name) {
+                                    "Calling" -> "Llamando..."
+                                    "Connected" -> formatDuration(callDuration)
+                                    else -> "Llamada"
+                                }, color = Color.White, fontSize = 13.sp)
                             if (callerName.isNotEmpty()) Text(callerName, color = Color(0xFFB2DFDB), fontSize = 11.sp)
+                        }
+                        IconButton(onClick = { vm.toggleSpeaker() }) {
+                            Icon(
+                                if (speakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown,
+                                null, Modifier.size(20.dp),
+                                tint = if (speakerOn) Color(0xFFB2DFDB) else Color.White
+                            )
                         }
                         Button(onClick = { vm.hangup() }, modifier = Modifier.height(32.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),

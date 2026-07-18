@@ -43,11 +43,31 @@ const wss = new WebSocket.Server({ server });
 
 function heartbeat() { this.isAlive = true; }
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.on('pong', heartbeat);
-  const guestId = 'g' + (++guestIdCounter);
-  const defaultName = 'Usuario-' + guestId;
+
+  // Reconnection support: pass ?reconnect=ID to reuse a previous guest ID
+  const reconnectId = req.url ? new URL(req.url, 'http://localhost').searchParams.get('reconnect') : null;
+  let guestId, defaultName;
+
+  if (reconnectId) {
+    // Find if this ID is still in the map but disconnected (check if the old ws is dead)
+    for (const [sock, info] of guests) {
+      if (info.id === reconnectId && sock.readyState !== WebSocket.OPEN) {
+        guests.delete(sock);
+        guestId = reconnectId;
+        defaultName = info.name;
+        guests.set(ws, { id: guestId, name: defaultName });
+        sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
+        console.log(`Guest reconnected: ${guestId}`);
+        return;
+      }
+    }
+  }
+
+  guestId = 'g' + (++guestIdCounter);
+  defaultName = 'Usuario-' + guestId;
   guests.set(ws, { id: guestId, name: defaultName });
   sendJSON(ws, { type: 'init', id: guestId, guests: guestList() });
   broadcastGuestList();
