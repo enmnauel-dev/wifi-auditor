@@ -1466,26 +1466,18 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingOfferSdp: String? = null
     private val pendingCandidates = mutableListOf<IceCandidate>()
 
-    private val iceServers = listOf(
-        PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
-        PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443").createIceServer()
-    )
+    private val iceServers = emptyList<PeerConnection.IceServer>()
 
     private fun initWebRTC() {
         if (pcFactory != null) return
-        PeerConnectionFactory.InitializationOptions.builder(getApplication())
-            .createInitializationOptions()
-            .also { PeerConnectionFactory.initialize(it) }
         try {
-            val swEncoderFactory = SoftwareVideoEncoderFactory()
-            val swDecoderFactory = SoftwareVideoDecoderFactory()
+            val opts = PeerConnectionFactory.InitializationOptions.builder(getApplication())
+                .createInitializationOptions()
+            PeerConnectionFactory.initialize(opts)
             pcFactory = PeerConnectionFactory.builder()
-                .setVideoDecoderFactory(swDecoderFactory)
-                .setVideoEncoderFactory(swEncoderFactory)
                 .createPeerConnectionFactory()
         } catch (e: Exception) {
             addIncomingMessage("--- Error factory: ${e.message} ---")
-            pcFactory = null
         }
     }
 
