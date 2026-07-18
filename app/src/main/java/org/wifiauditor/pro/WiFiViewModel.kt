@@ -36,8 +36,6 @@ import java.util.concurrent.TimeUnit
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import java.net.ServerSocket
 import java.net.Socket
 import android.os.VibrationEffect
@@ -104,7 +102,7 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             }
             notificationManager.createNotificationChannel(channel)
         }
-        Handler(Looper.getMainLooper()).post { initWebRTC() }
+        initWebRTC()
     }
 
     private val _history = MutableStateFlow<List<ScanEntity>>(emptyList())
@@ -1478,14 +1476,25 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         PeerConnectionFactory.InitializationOptions.builder(getApplication())
             .createInitializationOptions()
             .also { PeerConnectionFactory.initialize(it) }
-        pcFactory = PeerConnectionFactory.builder()
-            .createPeerConnectionFactory()
+        try {
+            pcFactory = PeerConnectionFactory.builder()
+                .createPeerConnectionFactory()
+        } catch (e: Exception) {
+            addIncomingMessage("--- Error factory: ${e.message} ---")
+            pcFactory = null
+        }
     }
 
     private fun createPeerConnection(): PeerConnection? {
         initWebRTC()
+        if (pcFactory == null) {
+            addIncomingMessage("--- Error: pcFactory es null ---")
+            return null
+        }
         val config = PeerConnection.RTCConfiguration(iceServers)
         config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+        config.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        config.keyType = PeerConnection.KeyType.ECDSA
         val observer = object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
                 val cid = _callerId.value
@@ -1526,6 +1535,9 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
             override fun onDataChannel(channel: DataChannel?) {}
         }
         peerConnection = pcFactory?.createPeerConnection(config, observer)
+        if (peerConnection == null) {
+            addIncomingMessage("--- Error: createPeerConnection devolvio null (factory=${pcFactory != null}) ---")
+        }
         return peerConnection
     }
 
