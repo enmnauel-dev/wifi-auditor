@@ -1557,38 +1557,54 @@ class WiFiViewModel(application: Application) : AndroidViewModel(application) {
         _callerName.value = targetName
         _callerId.value = targetId
         webrtcExecutor.execute {
-            createPeerConnection()
-            addLocalAudio()
-            val constraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            }
-            peerConnection?.createOffer(object : SdpObserver {
-                override fun onCreateSuccess(desc: SessionDescription) {
-                    peerConnection?.setLocalDescription(object : SdpObserver {
-                        override fun onSetSuccess() {
-                            val payloadObj = org.json.JSONObject().apply {
-                                put("sdp", desc.description)
-                                put("type", desc.type.canonicalForm())
-                            }
-                            val msgObj = org.json.JSONObject().apply {
-                                put("type", "call-offer")
-                                put("to", targetId)
-                                put("payload", payloadObj)
-                            }
-                            val jsonStr = msgObj.toString()
-                            val sent = relayWs?.send(jsonStr)
-                            addIncomingMessage("--- Enviando oferta a $targetName (${if (sent == true) "OK" else "FALLO"}) ---")
-                            _status.value = "Oferta enviada: ${jsonStr.take(100)}..."
-                        }
-                        override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; addIncomingMessage("--- Error SDP local: $msg ---"); hangup() }
-                        override fun onCreateSuccess(d: SessionDescription) {}
-                        override fun onCreateFailure(m: String?) {}
-                    }, desc)
+            try {
+                createPeerConnection()
+                if (peerConnection == null) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        addIncomingMessage("--- Error: PeerConnection es null ---")
+                        _status.value = "Error: PC null"
+                        hangup()
+                    }
+                    return@execute
                 }
-                override fun onCreateFailure(msg: String?) { _status.value = "createOffer: $msg"; addIncomingMessage("--- Error createOffer: $msg ---"); hangup() }
-                override fun onSetSuccess() {}
-                override fun onSetFailure(msg: String?) {}
-            }, constraints)
+                addLocalAudio()
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                }
+                peerConnection?.createOffer(object : SdpObserver {
+                    override fun onCreateSuccess(desc: SessionDescription) {
+                        peerConnection?.setLocalDescription(object : SdpObserver {
+                            override fun onSetSuccess() {
+                                val payloadObj = org.json.JSONObject().apply {
+                                    put("sdp", desc.description)
+                                    put("type", desc.type.canonicalForm())
+                                }
+                                val msgObj = org.json.JSONObject().apply {
+                                    put("type", "call-offer")
+                                    put("to", targetId)
+                                    put("payload", payloadObj)
+                                }
+                                val jsonStr = msgObj.toString()
+                                val sent = relayWs?.send(jsonStr)
+                                addIncomingMessage("--- Enviando oferta a $targetName (${if (sent == true) "OK" else "FALLO"}) ---")
+                                _status.value = "Oferta enviada: ${jsonStr.take(100)}..."
+                            }
+                            override fun onSetFailure(msg: String?) { _status.value = "SDP set: $msg"; addIncomingMessage("--- Error SDP local: $msg ---"); hangup() }
+                            override fun onCreateSuccess(d: SessionDescription) {}
+                            override fun onCreateFailure(m: String?) {}
+                        }, desc)
+                    }
+                    override fun onCreateFailure(msg: String?) { _status.value = "createOffer: $msg"; addIncomingMessage("--- Error createOffer: $msg ---"); hangup() }
+                    override fun onSetSuccess() {}
+                    override fun onSetFailure(msg: String?) {}
+                }, constraints)
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    addIncomingMessage("--- Error WebRTC: ${e.message ?: e.javaClass.simpleName} ---")
+                    _status.value = "Error: ${e.message}"
+                    hangup()
+                }
+            }
         }
     }
 
